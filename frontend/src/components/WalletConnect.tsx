@@ -1,5 +1,7 @@
 import { useState } from "react";
 import { ethers } from "ethers";
+import { useToast } from "./Toast";
+import { parseContractError } from "../lib/errors";
 
 interface WalletConnectProps {
   onConnected: (signer: ethers.JsonRpcSigner, address: string) => void;
@@ -7,10 +9,11 @@ interface WalletConnectProps {
 
 export default function WalletConnect({ onConnected }: WalletConnectProps) {
   const [loading, setLoading] = useState(false);
+  const { showToast } = useToast();
 
   async function connect() {
     if (!window.ethereum) {
-      alert("MetaMask is not installed. Please install it from https://metamask.io");
+      showToast("error", "MetaMask is not installed. Please install it from https://metamask.io");
       return;
     }
     setLoading(true);
@@ -21,7 +24,7 @@ export default function WalletConnect({ onConnected }: WalletConnectProps) {
       const address = await signer.getAddress();
       onConnected(signer, address);
     } catch (err: any) {
-      alert(err.message || "Failed to connect wallet");
+      showToast("error", parseContractError(err));
     } finally {
       setLoading(false);
     }

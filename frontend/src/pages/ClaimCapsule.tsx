@@ -7,6 +7,10 @@ import Disclaimer from "../components/Disclaimer";
 import CapsuleCard from "../components/CapsuleCard";
 import type { CapsuleView } from "../hooks/useTimeCapsule";
 import { decryptStoredMessage } from "../lib/ipfs";
+import { getVaultContract, estimateGas, type GasEstimateResult } from "../lib/contracts";
+import { useNetwork, getNetworkInfo } from "../contexts/NetworkContext";
+import { useToast } from "../components/Toast";
+import { parseContractError } from "../lib/errors";
 
 export default function ClaimCapsule() {
   const [signer, setSigner] = useState<ethers.JsonRpcSigner | null>(null);
@@ -18,12 +22,26 @@ export default function ClaimCapsule() {
   const [decryptedMessage, setDecryptedMessage] = useState<string | null>(null);
   const [decrypting, setDecrypting] = useState(false);
   const [decryptError, setDecryptError] = useState<string | null>(null);
+  const [claimGasEstimate, setClaimGasEstimate] = useState<GasEstimateResult | null>(null);
 
+  const { setNetwork, setProvider } = useNetwork();
+  const { showToast } = useToast();
   const { loading, error, setError, getCapsule, getMyAllocation, claimCapsule } = useTimeCapsule();
 
   async function handleConnected(signer: ethers.JsonRpcSigner, address: string) {
     setSigner(signer);
     setWalletAddress(address);
+    // Detect and set network
+    const provider = signer.provider as ethers.BrowserProvider;
+    if (provider) {
+      setProvider(provider);
+      try {
+        const network = await provider.getNetwork();
+        setNetwork(getNetworkInfo(network));
+      } catch (err) {
+        console.warn("Failed to detect network:", err);
+      }
+    }
   }
 
   async function handleLookup(e: React.FormEvent) {
@@ -45,14 +63,30 @@ export default function ClaimCapsule() {
 
     setCapsule(capsuleData);
     setMyAllocation(allocationData);
+
+    // Estimate gas for claim if eligible
+    if (allocationData && !allocationData.claimed && capsuleData.isUnlocked && signer) {
+      try {
+        const contract = getVaultContract(signer) as ethers.Contract;
+        const result = await estimateGas(signer, contract.claim, id);
+        setClaimGasEstimate(result);
+      } catch (err: any) {
+        setClaimGasEstimate({ success: false, error: err.message || "Gas estimation failed" });
+      }
+    } else {
+      setClaimGasEstimate(null);
+    }
   }
 
   async function handleClaim() {
     if (!signer || !capsule) return;
     const success = await claimCapsule(capsule.id, signer);
     if (success) {
+      showToast('success', 'Transaction submitted!');
       const updated = await getCapsule(capsule.id, signer);
       if (updated) setCapsule(updated);
+    } else if (error) {
+      showToast('error', parseContractError(error));
     }
   }
 
@@ -101,7 +135,7 @@ export default function ClaimCapsule() {
         <form onSubmit={handleLookup} style={{ display: "flex", flexDirection: "column", gap: "1rem" }}>
           {error && (
             <div style={{ background: "rgba(239,68,68,0.1)", color: "#ef4444", padding: "0.75rem", borderRadius: "8px", fontSize: "0.9rem" }}>
-              {error}
+              {parseContractError(error)}
             </div>
           )}
 
@@ -166,6 +200,26 @@ export default function ClaimCapsule() {
                   This capsule is unlocked. You can claim your ETH now.
                 </p>
               </div>
+              {/* Claim Gas Estimate */}
+              {claimGasEstimate && (
+                <div style={{
+                  background: claimGasEstimate.success ? "rgba(34,197,94,0.08)" : "rgba(239,68,68,0.08)",
+                  border: `1px solid ${claimGasEstimate.success ? "rgba(34,197,94,0.25)" : "rgba(239,68,68,0.25)"}`,
+                  borderRadius: "8px",
+                  padding: "0.75rem",
+                  fontSize: "0.85rem",
+                }}>
+                  {claimGasEstimate.success ? (
+                    <span style={{ color: "var(--success)" }}>
+                      Estimated gas: ~{claimGasEstimate.costEth.toFixed(6)} ETH
+                    </span>
+                  ) : (
+                    <span style={{ color: "#ef4444" }}>
+                      Gas estimation unavailable: {claimGasEstimate.error}
+                    </span>
+                  )}
+                </div>
+              )}
               <button
                 onClick={handleClaim}
                 disabled={loading}
@@ -248,7 +302,7 @@ export default function ClaimCapsule() {
           )}
 
           <button
-            onClick={() => { setCapsule(null); setCapsuleId(""); setMyAllocation(null); setDecryptedMessage(null); setDecryptError(null); }}
+            onClick={() => { setCapsule(null); setCapsuleId(""); setMyAllocation(null); setDecryptedMessage(null); setDecryptError(null); setClaimGasEstimate(null); }}
             style={{
               background: "transparent",
               color: "var(--text-muted)",

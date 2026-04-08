@@ -7,6 +7,8 @@ import WalletConnect from "../components/WalletConnect";
 import Disclaimer from "../components/Disclaimer";
 import CapsuleCard from "../components/CapsuleCard";
 import DateTimePicker from "../components/DateTimePicker";
+import { useToast } from "../components/Toast";
+import { parseContractError } from "../lib/errors";
 import type { CapsuleView } from "../hooks/useTimeCapsule";
 import { uploadEncryptedMessage } from "../lib/ipfs";
 import { getVaultContract, estimateGas, type GasEstimateResult } from "../lib/contracts";
@@ -49,6 +51,7 @@ export default function CreateCapsule() {
   const [walletAddress, setWalletAddress] = useState<string | null>(null);
   const { setNetwork, setProvider } = useNetwork();
   const [gasEstimate, setGasEstimate] = useState<GasEstimateResult | null>(null);
+  const { showToast } = useToast();
 
   // Default unlock: now + 30 days
   const defaultUnlock = new Date(Date.now() + 30 * 86400 * 1000);
@@ -187,18 +190,18 @@ export default function CreateCapsule() {
 
     for (const addr of addresses) {
       if (!addr || !ethers.isAddress(addr)) {
-        alert("Invalid beneficiary address");
+        showToast("error", "Invalid beneficiary address");
         return;
       }
     }
 
     if (lockSeconds < 60) {
-      alert("Unlock time must be at least 1 minute in the future");
+      showToast("error", "Unlock time must be at least 1 minute in the future");
       return;
     }
 
     if (!isAllocationValid) {
-      alert(`Total allocation must equal 100% (currently ${totalAllocation}%)`);
+      showToast("error", `Total allocation must equal 100% (currently ${totalAllocation}%)`);
       return;
     }
 
@@ -242,6 +245,7 @@ export default function CreateCapsule() {
       if (capsule) {
         setCreatedCapsule(capsule);
         setTxHash(`Capsule #${capsuleIdStr} created!`);
+        showToast('success', 'Transaction submitted!');
         // Store beneficiary info for founder to view later
         try {
           const capsuleData = {
@@ -368,7 +372,7 @@ export default function CreateCapsule() {
         <form onSubmit={handleSubmit} style={{ display: "flex", flexDirection: "column", gap: "1.25rem" }}>
           {error && (
             <div style={{ background: "rgba(239,68,68,0.1)", color: "#ef4444", padding: "0.75rem", borderRadius: "8px", fontSize: "0.9rem" }}>
-              {error}
+              {parseContractError(error)}
             </div>
           )}
 
