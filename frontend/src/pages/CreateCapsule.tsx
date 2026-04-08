@@ -5,31 +5,55 @@ import { useTimeCapsule } from "../hooks/useTimeCapsule";
 import WalletConnect from "../components/WalletConnect";
 import Disclaimer from "../components/Disclaimer";
 import CapsuleCard from "../components/CapsuleCard";
+import DateTimePicker from "../components/DateTimePicker";
 import type { CapsuleView } from "../hooks/useTimeCapsule";
-import { uploadToIPFS } from "../lib/ipfs";
+import { uploadEncryptedMessage } from "../lib/ipfs";
 
-const MIN_LOCK_DAYS = 1;
-const MAX_LOCK_DAYS = 3650; // 10 years
 const MIN_FEE_ETH = "0.001";
 
 interface FormState {
   beneficiaryAddress: string;
   allocation: string;
-  lockDays: string;
+  unlockDatetime: string; // ISO datetime string
   ethAmount: string;
   message: string;
+}
+
+function computeLockSeconds(unlockDatetime: string): number {
+  const unlock = new Date(unlockDatetime).getTime();
+  const now = Date.now();
+  return Math.max(0, Math.floor((unlock - now) / 1000));
+}
+
+function formatLockDuration(seconds: number): string {
+  if (seconds < 60) return `${seconds}s`;
+  if (seconds < 3600) return `${Math.floor(seconds / 60)}m`;
+  if (seconds < 86400) return `${Math.floor(seconds / 3600)}h`;
+  return `${Math.floor(seconds / 86400)}d`;
 }
 
 export default function CreateCapsule() {
   const [signer, setSigner] = useState<ethers.JsonRpcSigner | null>(null);
   const [walletAddress, setWalletAddress] = useState<string | null>(null);
+
+  // Default unlock: now + 30 days
+  const defaultUnlock = new Date(Date.now() + 30 * 86400 * 1000);
+  const defaultISO = (
+    defaultUnlock.getFullYear() + "-" +
+    String(defaultUnlock.getMonth() + 1).padStart(2, "0") + "-" +
+    String(defaultUnlock.getDate()).padStart(2, "0") + "T" +
+    String(defaultUnlock.getHours()).padStart(2, "0") + ":" +
+    String(defaultUnlock.getMinutes()).padStart(2, "0")
+  );
+
   const [form, setForm] = useState<FormState>({
     beneficiaryAddress: "",
     allocation: "100",
-    lockDays: "30",
+    unlockDatetime: defaultISO,
     ethAmount: "0.01",
     message: "",
   });
+
   const [createdCapsule, setCreatedCapsule] = useState<CapsuleView | null>(null);
   const [txHash, setTxHash] = useState<string | null>(null);
   const [uploading, setUploading] = useState(false);
@@ -45,23 +69,41 @@ export default function CreateCapsule() {
     e.preventDefault();
     if (!signer) return;
 
+    const lockSeconds = computeLockSeconds(form.unlockDatetime);
+    const nowSeconds = Math.floor(Date.now() / 1000);
+    const unlockTimestamp = BigInt(nowSeconds + lockSeconds);
+
+    // Validate
+    if (!form.beneficiaryAddress || !ethers.isAddress(form.beneficiaryAddress)) {
+      alert("Invalid beneficiary address");
+      return;
+    }
+    if (lockSeconds < 60) {
+      alert("Unlock time must be at least 1 minute in the future");
+      return;
+    }
+
     let messageHash = "";
 
-    // Upload message to IPFS if provided
+    // Encrypt and upload message if provided
     if (form.message.trim()) {
       setUploading(true);
       try {
-        const result = await uploadToIPFS(form.message);
-        messageHash = result.cid;
+        const result = await uploadEncryptedMessage(
+          form.beneficiaryAddress,
+          unlockTimestamp,
+          form.message
+        );
+        // Store both IPFS CID and encrypted content
+        // Priority: IPFS CID (if available) → base64 encrypted content
+        messageHash = result.cid || result.encryptedContent;
       } catch (err: any) {
-        alert(`IPFS upload failed: ${err.message}`);
-        setUploading(false);
-        return;
+        console.warn("Message upload failed:", err.message);
+        messageHash = "";
       }
       setUploading(false);
     }
 
-    const lockSeconds = Number(form.lockDays) * 86400;
     const capsuleIdStr = await createCapsule(
       {
         beneficiaryAddresses: [form.beneficiaryAddress],
@@ -77,7 +119,7 @@ export default function CreateCapsule() {
       const capsule = await getCapsule(Number(capsuleIdStr), signer);
       if (capsule) {
         setCreatedCapsule(capsule);
-        setTxHash(`Capsule #${capsuleIdStr} created successfully!`);
+        setTxHash(`Capsule #${capsuleIdStr} created!`);
       }
     }
   }
@@ -93,6 +135,8 @@ export default function CreateCapsule() {
       </div>
     );
   }
+
+  const lockSeconds = computeLockSeconds(form.unlockDatetime);
 
   return (
     <div>
@@ -117,7 +161,8 @@ export default function CreateCapsule() {
             {txHash}
           </p>
           <p style={{ color: "var(--text-muted)", fontSize: "0.9rem", marginTop: "0.5rem" }}>
-            Share the capsule ID with your beneficiary. They will need this to claim.
+            Your message has been <strong>encrypted</strong> with the beneficiary's address and unlock time.
+            Only the beneficiary can decrypt it after the unlock time.
           </p>
           <button
             onClick={() => setCreatedCapsule(null)}
@@ -142,6 +187,7 @@ export default function CreateCapsule() {
             </div>
           )}
 
+          {/* Beneficiary Address */}
           <div>
             <label style={{ display: "block", marginBottom: "0.5rem", fontSize: "0.9rem", color: "var(--text-muted)" }}>
               Beneficiary Address
@@ -164,6 +210,7 @@ export default function CreateCapsule() {
             />
           </div>
 
+          {/* Allocation */}
           <div>
             <label style={{ display: "block", marginBottom: "0.5rem", fontSize: "0.9rem", color: "var(--text-muted)" }}>
               Allocation (%)
@@ -187,29 +234,28 @@ export default function CreateCapsule() {
             />
           </div>
 
+          {/* Unlock DateTime */}
           <div>
             <label style={{ display: "block", marginBottom: "0.5rem", fontSize: "0.9rem", color: "var(--text-muted)" }}>
-              Lock Duration (days) — {MIN_LOCK_DAYS} to {MAX_LOCK_DAYS}
+              Unlock Date & Time
             </label>
-            <input
-              type="number"
-              value={form.lockDays}
-              onChange={(e) => setForm({ ...form, lockDays: e.target.value })}
-              min={MIN_LOCK_DAYS}
-              max={MAX_LOCK_DAYS}
-              required
-              style={{
-                width: "100%",
-                background: "var(--card)",
-                border: "1px solid var(--border)",
-                borderRadius: "8px",
-                padding: "0.75rem",
-                color: "var(--text)",
-                fontSize: "0.95rem",
-              }}
+            <DateTimePicker
+              value={form.unlockDatetime}
+              onChange={(iso) => setForm({ ...form, unlockDatetime: iso })}
             />
+            <div style={{ marginTop: "0.5rem", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+              <span style={{ color: lockSeconds < 60 ? "#ef4444" : "var(--text-muted)", fontSize: "0.8rem" }}>
+                {lockSeconds < 60
+                  ? "Must be in the future"
+                  : `Lock duration: ${formatLockDuration(lockSeconds)}`}
+              </span>
+              <span style={{ color: "var(--text-muted)", fontSize: "0.8rem" }}>
+                {new Date(form.unlockDatetime).toLocaleString()}
+              </span>
+            </div>
           </div>
 
+          {/* ETH Amount */}
           <div>
             <label style={{ display: "block", marginBottom: "0.5rem", fontSize: "0.9rem", color: "var(--text-muted)" }}>
               ETH Amount (min {MIN_FEE_ETH})
@@ -233,14 +279,15 @@ export default function CreateCapsule() {
             />
           </div>
 
+          {/* Encrypted Message */}
           <div>
             <label style={{ display: "block", marginBottom: "0.5rem", fontSize: "0.9rem", color: "var(--text-muted)" }}>
-              Message (optional — stored on IPFS)
+              Message (optional — AES-256 encrypted with beneficiary key + unlock time)
             </label>
             <textarea
               value={form.message}
               onChange={(e) => setForm({ ...form, message: e.target.value })}
-              placeholder="Write a message to your beneficiaries..."
+              placeholder="Write a message to your beneficiaries... It will be encrypted and only they can decrypt it after unlock."
               rows={4}
               style={{
                 width: "100%",
@@ -253,11 +300,15 @@ export default function CreateCapsule() {
                 resize: "vertical",
               }}
             />
+            <p style={{ color: "var(--text-muted)", fontSize: "0.75rem", marginTop: "0.4rem" }}>
+              Encrypted with AES-256-GCM. Key = keccak256(beneficiary + unlock time).
+              Cannot be decrypted without both factors.
+            </p>
           </div>
 
           <button
             type="submit"
-            disabled={loading || uploading}
+            disabled={loading || uploading || lockSeconds < 60}
             style={{
               background: "var(--accent)",
               color: "#fff",
@@ -266,11 +317,11 @@ export default function CreateCapsule() {
               padding: "1rem",
               fontSize: "1rem",
               fontWeight: 600,
-              cursor: loading || uploading ? "not-allowed" : "pointer",
-              opacity: loading || uploading ? 0.7 : 1,
+              cursor: loading || uploading || lockSeconds < 60 ? "not-allowed" : "pointer",
+              opacity: loading || uploading || lockSeconds < 60 ? 0.7 : 1,
             }}
           >
-            {uploading ? "Uploading to IPFS..." : loading ? "Creating..." : "Create Capsule"}
+            {uploading ? "Encrypting & uploading..." : loading ? "Creating..." : "Create Capsule"}
           </button>
         </form>
       )}

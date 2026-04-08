@@ -6,6 +6,7 @@ import WalletConnect from "../components/WalletConnect";
 import Disclaimer from "../components/Disclaimer";
 import CapsuleCard from "../components/CapsuleCard";
 import type { CapsuleView } from "../hooks/useTimeCapsule";
+import { decryptStoredMessage } from "../lib/ipfs";
 
 export default function ClaimCapsule() {
   const [signer, setSigner] = useState<ethers.JsonRpcSigner | null>(null);
@@ -14,6 +15,9 @@ export default function ClaimCapsule() {
   const [capsule, setCapsule] = useState<CapsuleView | null>(null);
   const [myAllocation, setMyAllocation] = useState<{ allocation: bigint; claimed: boolean } | null>(null);
   const [notFound, setNotFound] = useState(false);
+  const [decryptedMessage, setDecryptedMessage] = useState<string | null>(null);
+  const [decrypting, setDecrypting] = useState(false);
+  const [decryptError, setDecryptError] = useState<string | null>(null);
 
   const { loading, error, setError, getCapsule, getMyAllocation, claimCapsule } = useTimeCapsule();
 
@@ -47,9 +51,26 @@ export default function ClaimCapsule() {
     if (!signer || !capsule) return;
     const success = await claimCapsule(capsule.id, signer);
     if (success) {
-      // Refresh capsule state
       const updated = await getCapsule(capsule.id, signer);
       if (updated) setCapsule(updated);
+    }
+  }
+
+  async function handleDecryptMessage() {
+    if (!capsule || !walletAddress) return;
+    setDecrypting(true);
+    setDecryptError(null);
+    try {
+      const message = await decryptStoredMessage(
+        walletAddress,
+        capsule.unlockTimestamp,
+        capsule.messageHash
+      );
+      setDecryptedMessage(message);
+    } catch (err: any) {
+      setDecryptError(err.message || "Decryption failed");
+    } finally {
+      setDecrypting(false);
     }
   }
 
@@ -183,8 +204,51 @@ export default function ClaimCapsule() {
             </div>
           )}
 
+          {/* Message decryption — available after unlock regardless of claim status */}
+          {capsule.messageHash && (
+            <div style={{ background: "rgba(30,30,50,0.8)", border: "1px solid var(--border)", borderRadius: "8px", padding: "1rem" }}>
+              <p style={{ color: "var(--text-muted)", fontSize: "0.85rem", marginBottom: "0.75rem" }}>
+                Encrypted Message
+              </p>
+              {decryptedMessage ? (
+                <div>
+                  <p style={{ color: "var(--text)", fontSize: "0.95rem", whiteSpace: "pre-wrap", background: "rgba(34,197,94,0.05)", padding: "0.75rem", borderRadius: "6px", border: "1px solid rgba(34,197,94,0.2)" }}>
+                    {decryptedMessage}
+                  </p>
+                </div>
+              ) : (
+                <button
+                  onClick={handleDecryptMessage}
+                  disabled={decrypting}
+                  style={{
+                    background: "transparent",
+                    color: "var(--accent-light)",
+                    border: "1px solid var(--accent-light)",
+                    borderRadius: "8px",
+                    padding: "0.5rem 1rem",
+                    fontSize: "0.85rem",
+                    cursor: decrypting ? "not-allowed" : "pointer",
+                    opacity: decrypting ? 0.7 : 1,
+                  }}
+                >
+                  {decrypting ? "Decrypting..." : "Decrypt Message"}
+                </button>
+              )}
+              {decryptError && (
+                <p style={{ color: "#ef4444", fontSize: "0.8rem", marginTop: "0.5rem" }}>
+                  Decryption failed: {decryptError}
+                </p>
+              )}
+              {!capsule.isUnlocked && !decryptedMessage && (
+                <p style={{ color: "var(--text-muted)", fontSize: "0.75rem", marginTop: "0.4rem" }}>
+                  Capsule must be unlocked before you can decrypt the message.
+                </p>
+              )}
+            </div>
+          )}
+
           <button
-            onClick={() => { setCapsule(null); setCapsuleId(""); setMyAllocation(null); }}
+            onClick={() => { setCapsule(null); setCapsuleId(""); setMyAllocation(null); setDecryptedMessage(null); setDecryptError(null); }}
             style={{
               background: "transparent",
               color: "var(--text-muted)",
