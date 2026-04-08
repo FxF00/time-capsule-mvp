@@ -1,0 +1,21 @@
+:root {
+  --bg: #0f0f14;
+  --card: #1a1a24;
+  --border: #2a2a3a;
+  --accent: #7c3aed;
+  --accent-light: #a78bfa;
+  --text: #f0f0f5;
+  --text-muted: #888899;
+  --danger: #ef4444;
+  --success: #22c55e;
+  font-family: system-ui, -apple-system, sans-serif;
+}
+
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--text);
+  min-height: 100vh;
+}
+
+* { box-sizing: border-box; }

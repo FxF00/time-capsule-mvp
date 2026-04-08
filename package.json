@@ -1,0 +1,13 @@
+{
+  "name": "time-capsule-mvp",
+  "private": true,
+  "workspaces": ["contracts", "frontend"],
+  "scripts": {
+    "install:all": "npm install",
+    "test": "cd contracts && npx hardhat test",
+    "node": "cd contracts && npx hardhat node",
+    "deploy:mumbai": "cd contracts && npx hardhat run scripts/deploy.ts --network mumbai",
+    "deploy:polygon": "cd contracts && npx hardhat run scripts/deploy.ts --network polygon",
+    "dev:frontend": "cd frontend && npm run dev"
+  }
+}
