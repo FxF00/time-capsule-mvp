@@ -30,15 +30,18 @@ contract TimeCapsuleVault is Ownable, ReentrancyGuard, Pausable {
     struct Capsule {
         address founder;
         uint256 unlockTimestamp;
-        bool isWithdrawn; // true if founder cancelled
+        bool isWithdrawn; // true if founder cancelled or all claimed
         string messageHash; // IPFS CID, can be empty
         Beneficiary[] beneficiaries;
+        uint256 depositedValue; // ETH contributed by founder
     }
 
     // ============ State ============
     Capsule[] public capsules; // capsuleId => Capsule
     // capsuleId => beneficiary address => isBeneficiary
     mapping(uint256 => mapping(address => bool)) public isBeneficiary;
+    // capsuleId => beneficiary address => beneficiary index
+    mapping(uint256 => mapping(address => uint256)) public beneficiaryIndices;
 
     // ============ Events ============
     event CapsuleCreated(
@@ -102,6 +105,7 @@ contract TimeCapsuleVault is Ownable, ReentrancyGuard, Pausable {
         c.unlockTimestamp = block.timestamp + lockDurationSeconds;
         c.isWithdrawn = false;
         c.messageHash = messageHash;
+        c.depositedValue = msg.value;
 
         // Add beneficiaries
         for (uint256 i = 0; i < beneficiaryAddresses.length; i++) {
@@ -112,6 +116,7 @@ contract TimeCapsuleVault is Ownable, ReentrancyGuard, Pausable {
                 claimed: false
             }));
             isBeneficiary[capsuleId][beneficiaryAddresses[i]] = true;
+            beneficiaryIndices[capsuleId][beneficiaryAddresses[i]] = i + 1;
             emit BeneficiaryAdded(capsuleId, beneficiaryAddresses[i], allocations[i]);
         }
 
@@ -128,13 +133,20 @@ contract TimeCapsuleVault is Ownable, ReentrancyGuard, Pausable {
 
         Beneficiary storage b = _getBeneficiary(capsuleId, msg.sender);
         if (b.claimed) revert AlreadyClaimed();
-        if (address(this).balance == 0) revert NothingToClaim();
+        if (c.depositedValue == 0) revert NothingToClaim();
 
         b.claimed = true;
-        uint256 amount = (address(this).balance * b.allocationPercentage) / 100;
+        uint256 amount = (c.depositedValue * b.allocationPercentage) / 100;
         emit WithdrawalClaimed(capsuleId, msg.sender, amount);
         (bool sent, ) = msg.sender.call{value: amount}("");
         require(sent, "Transfer failed");
+
+        // Check if all beneficiaries have claimed
+        bool allClaimed = true;
+        for (uint256 i = 0; i < c.beneficiaries.length; i++) {
+            if (!c.beneficiaries[i].claimed) { allClaimed = false; break; }
+        }
+        if (allClaimed) { c.isWithdrawn = true; }
     }
 
     /// @notice Founder cancels and retrieves all funds before unlock
@@ -146,7 +158,7 @@ contract TimeCapsuleVault is Ownable, ReentrancyGuard, Pausable {
         if (c.isWithdrawn) revert AlreadyWithdrawn();
 
         c.isWithdrawn = true;
-        uint256 amount = address(this).balance;
+        uint256 amount = c.depositedValue;
         emit CapsuleCancelled(capsuleId, msg.sender);
         (bool sent, ) = payable(msg.sender).call{value: amount}("");
         require(sent, "Transfer failed");
@@ -192,13 +204,9 @@ contract TimeCapsuleVault is Ownable, ReentrancyGuard, Pausable {
     // ============ Internal ============
 
     function _getBeneficiary(uint256 capsuleId, address wallet) internal view returns (Beneficiary storage) {
-        uint256 len = capsules[capsuleId].beneficiaries.length;
-        for (uint256 i = 0; i < len; i++) {
-            if (capsules[capsuleId].beneficiaries[i].wallet == wallet) {
-                return capsules[capsuleId].beneficiaries[i];
-            }
-        }
-        revert NotBeneficiary();
+        uint256 idx = beneficiaryIndices[capsuleId][wallet];
+        if (idx == 0) revert NotBeneficiary();
+        return capsules[capsuleId].beneficiaries[idx - 1];
     }
 
     receive() external payable {}
