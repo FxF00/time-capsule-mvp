@@ -552,6 +552,27 @@ export default function CreateCapsule() {
             </p>
           </div>
 
+          {/* Gas Estimate */}
+          {gasEstimate && (
+            <div style={{
+              background: gasEstimate.success ? "rgba(34,197,94,0.08)" : "rgba(239,68,68,0.08)",
+              border: `1px solid ${gasEstimate.success ? "rgba(34,197,94,0.25)" : "rgba(239,68,68,0.25)"}`,
+              borderRadius: "8px",
+              padding: "0.75rem",
+              fontSize: "0.85rem",
+            }}>
+              {gasEstimate.success ? (
+                <span style={{ color: "var(--success)" }}>
+                  Estimated gas: ~{gasEstimate.costEth.toFixed(6)} ETH
+                </span>
+              ) : (
+                <span style={{ color: "#ef4444" }}>
+                  Gas estimation unavailable: {gasEstimate.error}
+                </span>
+              )}
+            </div>
+          )}
+
           <button
             type="submit"
             disabled={loading || uploading || lockSeconds < 60 || !isAllocationValid}

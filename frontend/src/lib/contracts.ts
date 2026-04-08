@@ -43,3 +43,32 @@ export type Capsule = {
 export function getVaultContract(provider: ethers.ContractRunner) {
   return new ethers.Contract(CONTRACT_ADDRESS, VAULT_ABI, provider);
 }
+
+export interface GasEstimate {
+  estimate: bigint;
+  costEth: number;
+  success: true;
+}
+
+export interface GasEstimateError {
+  success: false;
+  error: string;
+}
+
+export type GasEstimateResult = GasEstimate | GasEstimateError;
+
+export async function estimateGas(
+  signer: ethers.JsonRpcSigner,
+  fn: any,
+  ...args: any[]
+): Promise<GasEstimateResult> {
+  try {
+    const estimate = await fn.estimateGas(...args);
+    const feeData = await signer.provider!.getFeeData();
+    const gasPrice = feeData.gasPrice || BigInt(0);
+    const costEth = Number(ethers.formatEther(estimate * gasPrice));
+    return { estimate, costEth, success: true };
+  } catch (err: any) {
+    return { success: false, error: err.message || "Gas estimation failed" };
+  }
+}

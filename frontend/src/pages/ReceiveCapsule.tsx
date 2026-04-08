@@ -9,6 +9,11 @@ import type { CapsuleView } from "../hooks/useTimeCapsule";
 
 type PageState = "loading" | "no_wallet" | "wrong_wallet" | "locked" | "unlocked" | "claimed" | "not_found";
 
+interface BeneficiaryInfo {
+  address: string;
+  allocation: number;
+}
+
 export default function ReceiveCapsule() {
   const { founder, capsuleId } = useParams();
   const [walletAddress, setWalletAddress] = useState<string | null>(null);
@@ -17,8 +22,10 @@ export default function ReceiveCapsule() {
   const [decryptedMessage, setDecryptedMessage] = useState<string | null>(null);
   const [decrypting, setDecrypting] = useState(false);
   const [claiming, setClaiming] = useState(false);
+  const [myAllocation, setMyAllocation] = useState<{ allocation: bigint; claimed: boolean } | null>(null);
+  const [beneficiaries, setBeneficiaries] = useState<BeneficiaryInfo[] | null>(null);
 
-  const { getCapsule, claimCapsule } = useTimeCapsule();
+  const { getCapsule, claimCapsule, getMyAllocation } = useTimeCapsule();
 
   // Parse capsule ID from URL
   const id = Number(capsuleId);
@@ -33,6 +40,25 @@ export default function ReceiveCapsule() {
       return;
     }
     setCapsule(data);
+
+    // Try to load beneficiary info from sessionStorage (for founder)
+    const storedBeneficiaries = sessionStorage.getItem(`capsule_beneficiaries_${founder}_${id}`);
+    if (storedBeneficiaries) {
+      try {
+        const parsed = JSON.parse(storedBeneficiaries);
+        setBeneficiaries(parsed.beneficiaries || null);
+      } catch {
+        // ignore parse errors
+      }
+    }
+
+    // Load user's own allocation
+    try {
+      const alloc = await getMyAllocation(id, signer);
+      setMyAllocation(alloc);
+    } catch {
+      // not a beneficiary or error
+    }
 
     if (data.isWithdrawn) {
       setPageState("claimed");
@@ -75,6 +101,13 @@ export default function ReceiveCapsule() {
       if (success) {
         const updated = await getCapsule(capsule.id, signer);
         if (updated) setCapsule(updated);
+        // Refresh allocation after claiming
+        try {
+          const alloc = await getMyAllocation(capsule.id, signer);
+          setMyAllocation(alloc);
+        } catch {
+          // ignore
+        }
         setPageState("claimed");
       }
     } catch {
@@ -176,14 +209,87 @@ export default function ReceiveCapsule() {
   }
 
   if (pageState === "claimed") {
+    const isFounder = capsule?.founder?.toLowerCase() === walletAddress?.toLowerCase();
+    const ethAmount = capsule ? parseFloat(ethers.formatEther(capsule.depositedValue)).toFixed(4) : "0";
+
+    // Format allocation - the contract returns allocation as a percentage value (e.g., 100 means 100%)
+    const myAllocationPercent = myAllocation ? Number(myAllocation.allocation) : null;
+
     return (
       <div style={{ textAlign: "center", padding: "4rem 2rem" }}>
-        <div style={{ background: "rgba(139,92,246,0.1)", border: "1px solid rgba(139,92,246,0.3)", borderRadius: "16px", padding: "2.5rem", maxWidth: "480px", margin: "0 auto" }}>
-          <div style={{ fontSize: "2.5rem", marginBottom: "1rem" }}>✅</div>
-          <h2 style={{ marginBottom: "1rem", color: "var(--accent-light)" }}>Already Claimed</h2>
-          <p style={{ color: "var(--text-muted)", fontSize: "0.9rem" }}>
-            This capsule has already been claimed.
-          </p>
+        <div style={{ maxWidth: "480px", margin: "0 auto" }}>
+          <div style={{ background: "rgba(139,92,246,0.1)", border: "1px solid rgba(139,92,246,0.3)", borderRadius: "16px", padding: "2.5rem", marginBottom: "1.5rem" }}>
+            <div style={{ fontSize: "2.5rem", marginBottom: "1rem" }}>✅</div>
+            <h2 style={{ marginBottom: "1rem", color: "var(--accent-light)" }}>Already Claimed</h2>
+            <p style={{ color: "var(--text-muted)", fontSize: "0.9rem" }}>
+              This capsule has already been claimed.
+            </p>
+          </div>
+
+          {/* Beneficiary Information */}
+          {capsule && (
+            <div style={{ background: "var(--card)", border: "1px solid var(--border)", borderRadius: "12px", padding: "1.25rem", marginBottom: "1.5rem", textAlign: "left" }}>
+              <p style={{ fontSize: "0.7rem", color: "var(--text-muted)", textTransform: "uppercase", letterSpacing: "0.05em", marginBottom: "0.75rem" }}>
+                Beneficiary Information
+              </p>
+
+              {/* Show all beneficiaries if we have the data (founder's sessionStorage) */}
+              {beneficiaries && beneficiaries.length > 0 && (
+                <div style={{ marginBottom: "1rem" }}>
+                  <p style={{ fontSize: "0.85rem", color: "var(--text-muted)", marginBottom: "0.5rem" }}>
+                    All Beneficiaries ({beneficiaries.length} total):
+                  </p>
+                  {beneficiaries.map((b, i) => (
+                    <div key={i} style={{ display: "flex", justifyContent: "space-between", padding: "0.4rem 0", borderBottom: "1px solid var(--border)" }}>
+                      <span style={{ fontFamily: "monospace", color: "var(--accent)", fontSize: "0.85rem" }}>
+                        {b.address.slice(0, 6)}...{b.address.slice(-4)}
+                      </span>
+                      <span style={{ color: "var(--text)", fontSize: "0.85rem" }}>
+                        {b.allocation}%
+                      </span>
+                    </div>
+                  ))}
+                </div>
+              )}
+
+              {/* Show user's own allocation */}
+              {myAllocationPercent !== null && (
+                <div style={{ padding: "0.75rem", background: "rgba(34,197,94,0.08)", borderRadius: "8px", marginBottom: beneficiaries && beneficiaries.length > 0 ? "0.75rem" : "0" }}>
+                  <p style={{ fontSize: "0.8rem", color: "var(--text-muted)", marginBottom: "0.25rem" }}>
+                    Your Allocation
+                  </p>
+                  <p style={{ fontSize: "1.5rem", fontWeight: 700, color: "var(--success)" }}>
+                    {myAllocationPercent}% ({((parseFloat(ethAmount) * myAllocationPercent) / 100).toFixed(4)} ETH)
+                  </p>
+                </div>
+              )}
+
+              {/* Fallback when we don't have beneficiary data */}
+              {!beneficiaries && (
+                <div>
+                  <p style={{ fontSize: "0.85rem", color: "var(--text-muted)", marginBottom: "0.5rem" }}>
+                    Total Beneficiaries: {capsule.beneficiaryCount}
+                  </p>
+                  {myAllocationPercent !== null && (
+                    <p style={{ fontSize: "0.9rem", color: "var(--text)" }}>
+                      Your share: <strong>{myAllocationPercent}%</strong>
+                    </p>
+                  )}
+                </div>
+              )}
+            </div>
+          )}
+
+          {/* ETH Amount claimed */}
+          <div style={{ marginBottom: "1.5rem" }}>
+            <p style={{ color: "var(--text-muted)", fontSize: "0.85rem", marginBottom: "0.25rem" }}>
+              Total Deposited
+            </p>
+            <p style={{ fontSize: "2rem", fontWeight: 700, color: "var(--accent)" }}>
+              {ethAmount} ETH
+            </p>
+          </div>
+
           <Link to="/create" style={{ color: "var(--accent-light)", marginTop: "1.5rem", display: "inline-block" }}>
             Create Your Own Capsule →
           </Link>
@@ -213,6 +319,15 @@ export default function ReceiveCapsule() {
           {ethAmount} ETH
         </div>
         <p style={{ color: "var(--text-muted)", fontSize: "0.8rem", marginBottom: "2rem" }}>Deposited Value</p>
+
+        {/* Beneficiary count indicator */}
+        {capsule && capsule.beneficiaryCount > 1 && (
+          <div style={{ background: "var(--card)", border: "1px solid var(--border)", borderRadius: "8px", padding: "0.75rem", marginBottom: "1.5rem" }}>
+            <p style={{ fontSize: "0.8rem", color: "var(--text-muted)" }}>
+              Multi-beneficiary capsule · {capsule.beneficiaryCount} beneficiaries
+            </p>
+          </div>
+        )}
 
         {/* Message Box */}
         <div style={{ background: "var(--card)", border: "1px solid var(--border)", borderRadius: "12px", padding: "1.25rem", marginBottom: "2rem", textAlign: "left" }}>
@@ -258,7 +373,7 @@ export default function ReceiveCapsule() {
         ) : (
           <div style={{ background: "rgba(34,197,94,0.08)", border: "1px solid rgba(34,197,94,0.25)", borderRadius: "12px", padding: "1.5rem", marginBottom: "1.5rem" }}>
             <p style={{ color: "var(--success)", fontSize: "0.9rem", fontWeight: 700, marginBottom: "0.25rem" }}>
-              ✨ Time Capsule Unlocked!
+              Time Capsule Unlocked!
             </p>
             <p style={{ color: "var(--text-muted)", fontSize: "0.8rem" }}>
               Your message and ETH are ready to claim.
@@ -306,7 +421,7 @@ export default function ReceiveCapsule() {
         )}
 
         <p style={{ color: "var(--text-muted)", fontSize: "0.7rem", marginTop: "1.5rem" }}>
-          Capsule ID #{id} · {capsule?.founder?.toLowerCase() === walletAddress?.toLowerCase() ? "You are the founder" : "You are the beneficiary"}
+          Capsule ID #{id} · {capsule?.founder?.toLowerCase() === walletAddress?.toLowerCase() ? "You are the founder" : "You are a beneficiary"}
         </p>
       </div>
     </div>
