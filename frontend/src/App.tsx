@@ -1,6 +1,7 @@
 import { createBrowserRouter, RouterProvider, Link, useLocation } from "react-router-dom";
 import CreateCapsule from "./pages/CreateCapsule";
 import ClaimCapsule from "./pages/ClaimCapsule";
+import ReceiveCapsule from "./pages/ReceiveCapsule";
 
 function NavBar() {
   const location = useLocation();
@@ -69,6 +70,10 @@ const router = createBrowserRouter([
         <ClaimCapsule />
       </div>
     ),
+  },
+  {
+    path: "/receive/:founder/:capsuleId",
+    element: <ReceiveCapsule />,
   },
 ]);
 

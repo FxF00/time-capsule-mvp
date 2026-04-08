@@ -164,6 +164,35 @@ export default function CreateCapsule() {
             Your message has been <strong>encrypted</strong> with the beneficiary's address and unlock time.
             Only the beneficiary can decrypt it after the unlock time.
           </p>
+
+          {/* Shareable link */}
+          <div style={{ background: "var(--card)", border: "1px solid var(--border)", borderRadius: "10px", padding: "1rem", marginTop: "1rem" }}>
+            <p style={{ fontSize: "0.8rem", color: "var(--text-muted)", marginBottom: "0.75rem" }}>
+              Share this link with your beneficiary:
+            </p>
+            <code style={{ fontSize: "0.85rem", color: "var(--accent)", wordBreak: "break-all" }}>
+              {typeof window !== "undefined" ? `${window.location.origin}/receive/${createdCapsule.founder}/${createdCapsule.id}` : ""}
+            </code>
+            <button
+              onClick={() => {
+                const url = `${window.location.origin}/receive/${createdCapsule.founder}/${createdCapsule.id}`;
+                navigator.clipboard.writeText(url);
+              }}
+              style={{
+                marginTop: "0.75rem",
+                background: "transparent",
+                border: "1px solid var(--border)",
+                borderRadius: "6px",
+                padding: "0.4rem 0.8rem",
+                color: "var(--text-muted)",
+                fontSize: "0.8rem",
+                cursor: "pointer",
+              }}
+            >
+              Copy Link
+            </button>
+          </div>
+
           <button
             onClick={() => setCreatedCapsule(null)}
             style={{
