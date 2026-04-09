@@ -1,7 +1,10 @@
 {
   "name": "time-capsule-mvp",
   "private": true,
-  "workspaces": ["contracts", "frontend"],
+  "workspaces": [
+    "contracts",
+    "frontend"
+  ],
   "scripts": {
     "install:all": "npm install",
     "test": "PATH=\"/opt/homebrew/opt/node@22/bin:$PATH\" cd contracts && npx hardhat test",
@@ -9,5 +12,8 @@
     "deploy:mumbai": "cd contracts && npx hardhat run scripts/deploy.ts --network mumbai",
     "deploy:polygon": "cd contracts && npx hardhat run scripts/deploy.ts --network polygon",
     "dev:frontend": "cd frontend && npm run dev"
+  },
+  "devDependencies": {
+    "@types/qrcode": "^1.5.6"
   }
 }

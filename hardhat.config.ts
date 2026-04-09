@@ -27,12 +27,18 @@ const config: HardhatUserConfig = {
       url: process.env.POLYGON_RPC || "https://polygon-rpc.com",
       accounts: [PRIVATE_KEY],
       chainId: 137
+    },
+    amoy: {
+      url: process.env.POLYGON_AMOY_RPC || "https://rpc-amoy.polygon.technology",
+      accounts: [PRIVATE_KEY],
+      chainId: 80002
     }
   },
   etherscan: {
     apiKey: {
       polygon: process.env.POLYGONSCAN_API_KEY || "",
       polygonMumbai: process.env.POLYGONSCAN_API_KEY || "",
+      polygonAmoy: process.env.POLYGONSCAN_API_KEY || "",
     }
   },
   verify: {
