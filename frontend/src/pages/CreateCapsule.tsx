@@ -126,7 +126,8 @@ export default function CreateCapsule() {
 
     // Validate basic conditions for gas estimation
     const isValidAddresses = addresses.every((addr) => ethers.isAddress(addr));
-    if (!isValidAddresses || lockSeconds < 60 || totalAllocation !== 100) {
+    const MIN_LOCK_SECONDS = 86400; // 1 day — must match contract
+    if (!isValidAddresses || lockSeconds < MIN_LOCK_SECONDS || totalAllocation !== 100) {
       setGasEstimate(null);
       return;
     }
@@ -195,8 +196,8 @@ export default function CreateCapsule() {
       }
     }
 
-    if (lockSeconds < 60) {
-      showToast("error", "Unlock time must be at least 1 minute in the future");
+    if (lockSeconds < 86400) {
+      showToast("error", "Unlock time must be at least 1 day (contract minimum)");
       return;
     }
 
