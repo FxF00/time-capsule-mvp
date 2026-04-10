@@ -21,12 +21,19 @@ function pad(n: number, len = 2): string {
 }
 
 function toISOStringLocal(date: Date): string {
+  // Format as ISO string with timezone offset suffix (e.g. "+08:00")
+  // This ensures new Date(value) always interprets it as local time consistently
+  const offset = -date.getTimezoneOffset();
+  const sign = offset >= 0 ? "+" : "-";
+  const absOffset = Math.abs(offset);
+  const tzSuffix = `${sign}${pad(Math.floor(absOffset / 60))}:${pad(absOffset % 60)}`;
   return (
     date.getFullYear() + "-" +
     pad(date.getMonth() + 1) + "-" +
     pad(date.getDate()) + "T" +
     pad(date.getHours()) + ":" +
-    pad(date.getMinutes())
+    pad(date.getMinutes()) +
+    tzSuffix
   );
 }
 
@@ -48,7 +55,8 @@ export default function DateTimePicker({ value, onChange, minDate }: DateTimePic
 
   function notify() {
     const selected = new Date(year, month, day, hour, minute, 0);
-    if (selected.getTime() < now.getTime() + MIN_LOCK_MS) {
+    const nowFresh = new Date(); // always use current time, not stale closure
+    if (selected.getTime() < nowFresh.getTime() + MIN_LOCK_MS) {
       return; // Don't update if less than 1 day from now
     }
     onChange(toISOStringLocal(selected));

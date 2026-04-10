@@ -53,15 +53,25 @@ export default function CreateCapsule() {
   const [gasEstimate, setGasEstimate] = useState<GasEstimateResult | null>(null);
   const { showToast } = useToast();
 
-  // Default unlock: now + 30 days
+  // Default unlock: now + 30 days (timezone-aware ISO string)
   const defaultUnlock = new Date(Date.now() + 30 * 86400 * 1000);
-  const defaultISO = (
-    defaultUnlock.getFullYear() + "-" +
-    String(defaultUnlock.getMonth() + 1).padStart(2, "0") + "-" +
-    String(defaultUnlock.getDate()).padStart(2, "0") + "T" +
-    String(defaultUnlock.getHours()).padStart(2, "0") + ":" +
-    String(defaultUnlock.getMinutes()).padStart(2, "0")
-  );
+  function pad(n: number, len = 2): string {
+    return String(n).padStart(len, "0");
+  }
+  function localISO(d: Date): string {
+    const offset = -d.getTimezoneOffset();
+    const sign = offset >= 0 ? "+" : "-";
+    const absOffset = Math.abs(offset);
+    return (
+      d.getFullYear() + "-" +
+      pad(d.getMonth() + 1) + "-" +
+      pad(d.getDate()) + "T" +
+      pad(d.getHours()) + ":" +
+      pad(d.getMinutes()) +
+      `${sign}${pad(Math.floor(absOffset / 60))}:${pad(absOffset % 60)}`
+    );
+  }
+  const defaultISO = localISO(defaultUnlock);
 
   const [form, setForm] = useState<FormState>({
     beneficiaries: [{ address: "", allocation: "100" }],
