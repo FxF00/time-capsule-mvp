@@ -86,7 +86,7 @@ export function useTimeCapsule() {
         );
         const receipt = await tx.wait();
 
-        // Find CapsuleCreated event and decode it
+        // Find CapsuleCreated event — indexed uint256 capsuleId is in topics[1]
         const capsuleEvent = receipt.logs.find(
           (l: any) => l.fragment?.name === "CapsuleCreated"
         );
@@ -95,9 +95,14 @@ export function useTimeCapsule() {
           return null;
         }
 
-        // Decode the event args — receipt.logs are raw, need contract.interface to parse
-        const parsed = contract.interface.parseLog(capsuleEvent)!;
-        const capsuleId = parsed.args.capsuleId as bigint;
+        // capsuleId is the first indexed param → topics[1] (topics[0] is event signature)
+        // topics[1] is a 32-byte padded hex string
+        const capsuleIdHex = capsuleEvent.topics[1];
+        if (!capsuleIdHex) {
+          setError("CapsuleCreated event has no capsuleId in topics");
+          return null;
+        }
+        const capsuleId = BigInt(capsuleIdHex);
         return capsuleId.toString();
       } catch (err: any) {
         setError(err.message || "Failed to create capsule");
