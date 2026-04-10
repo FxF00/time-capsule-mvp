@@ -86,7 +86,7 @@ export function useTimeCapsule() {
         );
         const receipt = await tx.wait();
 
-        // Find CapsuleCreated event
+        // Find CapsuleCreated event and decode it
         const capsuleEvent = receipt.logs.find(
           (l: any) => l.fragment?.name === "CapsuleCreated"
         );
@@ -95,7 +95,9 @@ export function useTimeCapsule() {
           return null;
         }
 
-        const capsuleId = capsuleEvent.args.capsuleId as bigint;
+        // Decode the event args — receipt.logs are raw, need contract.interface to parse
+        const parsed = contract.interface.parseLog(capsuleEvent)!;
+        const capsuleId = parsed.args.capsuleId as bigint;
         return capsuleId.toString();
       } catch (err: any) {
         setError(err.message || "Failed to create capsule");
