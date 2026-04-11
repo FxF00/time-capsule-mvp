@@ -657,4 +657,56 @@ describe("TimeCapsuleVault", function () {
       expect(capsule0After.isWithdrawn).to.equal(true);
     });
   });
+
+  // ============ beneficiary lookups ============
+
+  describe("beneficiary lookups", () => {
+    const SEVEN_DAYS = 7 * 24 * 60 * 60;
+
+    beforeEach(async () => {
+      // Capsule 0: beneficiary1 (60%) and beneficiary2 (40%)
+      await vault.connect(owner).createCapsule(
+        [beneficiary1.address, beneficiary2.address],
+        [60, 40],
+        SEVEN_DAYS,
+        "",
+        { value: ethers.parseEther("1.0") }
+      );
+    });
+
+    it("isBeneficiary returns true for a valid beneficiary", async () => {
+      const result = await vault.isBeneficiary(0, beneficiary1.address);
+      expect(result).to.equal(true);
+    });
+
+    it("isBeneficiary returns true for the second beneficiary", async () => {
+      const result = await vault.isBeneficiary(0, beneficiary2.address);
+      expect(result).to.equal(true);
+    });
+
+    it("isBeneficiary returns false for a non-beneficiary", async () => {
+      const result = await vault.isBeneficiary(0, stranger.address);
+      expect(result).to.equal(false);
+    });
+
+    it("isBeneficiary returns false for non-existent capsule id", async () => {
+      const result = await vault.isBeneficiary(99, beneficiary1.address);
+      expect(result).to.equal(false);
+    });
+
+    it("beneficiaryIndices returns correct index for first beneficiary", async () => {
+      const index = await vault.beneficiaryIndices(0, beneficiary1.address);
+      expect(index).to.equal(1);
+    });
+
+    it("beneficiaryIndices returns correct index for second beneficiary", async () => {
+      const index = await vault.beneficiaryIndices(0, beneficiary2.address);
+      expect(index).to.equal(2);
+    });
+
+    it("beneficiaryIndices returns 0 for non-beneficiary (default value)", async () => {
+      const index = await vault.beneficiaryIndices(0, stranger.address);
+      expect(index).to.equal(0);
+    });
+  });
 });
