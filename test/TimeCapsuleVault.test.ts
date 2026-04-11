@@ -112,6 +112,40 @@ describe("TimeCapsuleVault", function () {
       ).to.be.revertedWithCustomError(vault, "LockTooShort");
     });
 
+    it("reverts if lock duration is 59 seconds (just below MIN_LOCK_SECONDS)", async () => {
+      await expect(
+        vault.connect(owner).createCapsule(
+          [beneficiary1.address],
+          [100],
+          59, // 1 second below MIN_LOCK_SECONDS (60 seconds)
+          "",
+          { value: ONE_ETHER }
+        )
+      ).to.be.revertedWithCustomError(vault, "LockTooShort");
+    });
+
+    it("accepts lock duration of exactly 60 seconds (MIN_LOCK_SECONDS boundary)", async () => {
+      const tx = await vault.connect(owner).createCapsule(
+        [beneficiary1.address],
+        [100],
+        60, // exactly MIN_LOCK_SECONDS
+        "",
+        { value: ONE_ETHER }
+      );
+      await expect(tx).to.not.be.reverted;
+    });
+
+    it("accepts lock duration of 61 seconds (just above MIN_LOCK_SECONDS)", async () => {
+      const tx = await vault.connect(owner).createCapsule(
+        [beneficiary1.address],
+        [100],
+        61, // 1 second above MIN_LOCK_SECONDS
+        "",
+        { value: ONE_ETHER }
+      );
+      await expect(tx).to.not.be.reverted;
+    });
+
     it("reverts if lock duration exceeds 10 years", async () => {
       await expect(
         vault.connect(owner).createCapsule(
