@@ -217,6 +217,49 @@ describe("TimeCapsuleVault", function () {
       );
       expect(addEvent1).to.not.be.undefined;
     });
+
+    it("CapsuleCreated event stores capsuleId in topics[1] (indexed parameter)", async () => {
+      const tx = await vault.connect(owner).createCapsule(
+        [beneficiary1.address],
+        [100],
+        SEVEN_DAYS,
+        "QmHash",
+        { value: ethers.parseEther("1.0") }
+      );
+      const receipt = await tx.wait();
+
+      const capsuleEvent = receipt.logs.find((l: any) =>
+        l.fragment?.name === "CapsuleCreated"
+      );
+      expect(capsuleEvent).to.not.be.undefined;
+
+      // capsuleId is indexed → stored in topics[1], not args
+      const capsuleIdFromTopic = BigInt(capsuleEvent!.topics[1]);
+      expect(capsuleIdFromTopic).to.equal(0n);
+    });
+
+    it("CapsuleCreated event stores founder in topics[2] (indexed parameter)", async () => {
+      const tx = await vault.connect(owner).createCapsule(
+        [beneficiary1.address],
+        [100],
+        SEVEN_DAYS,
+        "QmHash",
+        { value: ethers.parseEther("1.0") }
+      );
+      const receipt = await tx.wait();
+
+      const capsuleEvent = receipt.logs.find((l: any) =>
+        l.fragment?.name === "CapsuleCreated"
+      );
+      expect(capsuleEvent).to.not.be.undefined;
+
+      // founder is indexed → stored in topics[2], not args
+      // topics[2] is a 32-byte padded address
+      const founderFromTopic = capsuleEvent!.topics[2];
+      // The address is right-padded in topics[2]
+      const founderAddress = "0x" + founderFromTopic.slice(26);
+      expect(founderAddress.toLowerCase()).to.equal(owner.address.toLowerCase());
+    });
   });
 
   // ============ claim ============
