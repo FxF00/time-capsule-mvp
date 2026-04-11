@@ -18,6 +18,7 @@ export const VAULT_ABI = [
   "function cancelCapsule(uint256) external",
   // Views
   "function getCapsule(uint256) view returns (tuple(address founder, uint256 unlockTimestamp, bool isWithdrawn, string messageHash, uint256 depositedValue))",
+  "function capsules(uint256) view returns (address, uint256, bool, string, uint256)",
   "function getBeneficiaryCount(uint256) view returns (uint256)",
   "function getMyAllocation(uint256) view returns (uint256, bool)",
   "function isUnlocked(uint256) view returns (bool)",

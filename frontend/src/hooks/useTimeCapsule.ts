@@ -30,8 +30,9 @@ export function useTimeCapsule() {
     async (capsuleId: number, signer: ethers.JsonRpcSigner): Promise<CapsuleView | null> => {
       try {
         const contract = getVaultContract(signer) as ethers.Contract;
-        const [capsule, beneficiaryCount, isUnlocked, timeRemaining] = await Promise.all([
-          contract.getCapsule(capsuleId),
+        // Use capsules() directly — getCapsule() ABI has struct mismatch due to dynamic beneficiaries array
+        const [capsuleTuple, beneficiaryCount, isUnlocked, timeRemaining] = await Promise.all([
+          contract.capsules(capsuleId),
           contract.getBeneficiaryCount(capsuleId),
           contract.isUnlocked(capsuleId),
           contract.getTimeRemaining(capsuleId),
@@ -39,11 +40,11 @@ export function useTimeCapsule() {
 
         return {
           id: capsuleId,
-          founder: capsule.founder,
-          unlockTimestamp: capsule.unlockTimestamp,
-          isWithdrawn: capsule.isWithdrawn,
-          messageHash: capsule.messageHash,
-          depositedValue: capsule.depositedValue,
+          founder: capsuleTuple[0],
+          unlockTimestamp: capsuleTuple[1],
+          isWithdrawn: capsuleTuple[2],
+          messageHash: capsuleTuple[3],
+          depositedValue: capsuleTuple[4],
           beneficiaryCount: Number(beneficiaryCount),
           isUnlocked,
           timeRemaining,
