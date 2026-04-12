@@ -53,8 +53,8 @@ export default function CreateCapsule() {
   const [gasEstimate, setGasEstimate] = useState<GasEstimateResult | null>(null);
   const { showToast } = useToast();
 
-  // Default unlock: now + 30 days (timezone-aware ISO string)
-  const defaultUnlock = new Date(Date.now() + 30 * 86400 * 1000);
+  // Default unlock: now + 60 seconds (timezone-aware ISO string)
+  const defaultUnlock = new Date(Date.now() + 60000);
   function pad(n: number, len = 2): string {
     return String(n).padStart(len, "0");
   }
@@ -129,14 +129,18 @@ export default function CreateCapsule() {
 
     const addresses = form.beneficiaries.map((b) => b.address.trim());
     const allocations = form.beneficiaries.map((b) => Number(b.allocation));
-    const lockSeconds = computeLockSeconds(form.unlockDatetime);
-    const nowSeconds = Math.floor(Date.now() / 1000);
-    const unlockTimestamp = BigInt(nowSeconds + lockSeconds);
+    // Use block.timestamp instead of Date.now() to avoid clock drift between browser and Hardhat
+    const block = await signer.provider.getBlock('latest');
+    if (!block) return;
+    const blockTimestampSec = Number(block.timestamp);
+    const unlockSec = Math.floor(new Date(form.unlockDatetime).getTime() / 1000);
+    const lockSeconds = Math.max(0, unlockSec - blockTimestampSec);
+    const unlockTimestamp = BigInt(blockTimestampSec + lockSeconds);
     const value = ethers.parseEther(form.ethAmount || "0");
 
     // Validate basic conditions for gas estimation
     const isValidAddresses = addresses.every((addr) => ethers.isAddress(addr));
-    const MIN_LOCK_SECONDS = 86400; // 1 day — must match contract
+    const MIN_LOCK_SECONDS = 60; // 60 seconds — must match contract
     if (!isValidAddresses || lockSeconds < MIN_LOCK_SECONDS || totalAllocation !== 100) {
       setGasEstimate(null);
       return;
@@ -191,9 +195,13 @@ export default function CreateCapsule() {
     e.preventDefault();
     if (!signer) return;
 
-    const lockSeconds = computeLockSeconds(form.unlockDatetime);
-    const nowSeconds = Math.floor(Date.now() / 1000);
-    const unlockTimestamp = BigInt(nowSeconds + lockSeconds);
+    // Use block.timestamp instead of Date.now() to avoid clock drift between browser and Hardhat
+    const block = await signer.provider.getBlock('latest');
+    if (!block) return;
+    const blockTimestampSec = Number(block.timestamp);
+    const unlockSec = Math.floor(new Date(form.unlockDatetime).getTime() / 1000);
+    const lockSeconds = Math.max(0, unlockSec - blockTimestampSec);
+    const unlockTimestamp = BigInt(blockTimestampSec + lockSeconds);
 
     // Validate addresses
     const addresses = form.beneficiaries.map((b) => b.address.trim());
@@ -206,8 +214,8 @@ export default function CreateCapsule() {
       }
     }
 
-    if (lockSeconds < 86400) {
-      showToast("error", "Unlock time must be at least 1 day (contract minimum)");
+    if (lockSeconds < 60) {
+      showToast("error", "Unlock time must be at least 60 seconds (contract minimum)");
       return;
     }
 

@@ -14,6 +14,7 @@ interface EventInfo {
   timestamp: Date;
   txHash: string;
   blockNumber: number;
+  unlockTimestamp?: Date;
 }
 
 function formatAddress(addr: string): string {
@@ -141,6 +142,11 @@ function EventRow({ event, chainId }: { event: EventInfo; chainId: number }) {
             {event.amount} ETH
           </span>
         )}
+        {event.unlockTimestamp && (
+          <span style={{ color: "var(--accent)", fontSize: "0.7rem" }}>
+            Unlocks: {event.unlockTimestamp.toLocaleString()}
+          </span>
+        )}
         <span style={{ color: "var(--text-muted)", fontSize: "0.75rem" }}>
           {formatTimestamp(event.timestamp)}
         </span>
@@ -192,40 +198,46 @@ export default function History() {
           const eventName = eventLog.fragment.name;
 
           let type: EventType | null = null;
+          let founder = "";
           let beneficiary = "";
           let amount = "";
+          let unlockTimestamp: Date | undefined;
 
           if (eventName === "CapsuleCreated") {
             type = "created";
-            beneficiary = args[1] || ""; // address indexed
-            amount = args[3] ? ethers.formatEther(args[3]) : "0"; // uint256 value
+            // topics[1] = capsuleId, topics[2] = founder; args[0] = unlockTimestamp, args[1] = value
+            founder = eventLog.topics[2] ? "0x" + eventLog.topics[2].slice(26) : "";
+            amount = args[1] ? ethers.formatEther(args[1]) : "0";
+            if (args[0]) unlockTimestamp = new Date(Number(args[0]) * 1000);
           } else if (eventName === "WithdrawalClaimed") {
             type = "claimed";
-            beneficiary = args[1] || ""; // address indexed
-            amount = args[2] ? ethers.formatEther(args[2]) : "0"; // uint256 amount
+            // topics[1] = capsuleId, topics[2] = beneficiary; args[0] = amount
+            beneficiary = eventLog.topics[2] ? "0x" + eventLog.topics[2].slice(26) : "";
+            amount = args[0] ? ethers.formatEther(args[0]) : "0";
           } else if (eventName === "CapsuleCancelled") {
             type = "cancelled";
-            beneficiary = "";
+            // topics[1] = capsuleId, topics[2] = founder
+            founder = eventLog.topics[2] ? "0x" + eventLog.topics[2].slice(26) : "";
           } else if (eventName === "BeneficiaryAdded") {
-            // Skip individual BeneficiaryAdded events as they're part of creation
             continue;
           }
 
           if (type === null) continue;
 
-          // Fetch block timestamp
+          const capsuleId = eventLog.topics[1] ? Number(BigInt(eventLog.topics[1])) : 0;
           const block = await log.getBlock();
           const timestamp = new Date((block?.timestamp || 0) * 1000);
 
           newEvents.push({
             type,
-            capsuleId: Number(args[0]), // capsuleId is first indexed param
-            founder: args[1] as string,
+            capsuleId,
+            founder,
             beneficiary,
             amount,
             timestamp,
             txHash: log.transactionHash,
             blockNumber: log.blockNumber,
+            unlockTimestamp,
           });
         }
 

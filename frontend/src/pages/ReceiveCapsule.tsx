@@ -24,6 +24,7 @@ export default function ReceiveCapsule() {
   const [claiming, setClaiming] = useState(false);
   const [myAllocation, setMyAllocation] = useState<{ allocation: bigint; claimed: boolean } | null>(null);
   const [beneficiaries, setBeneficiaries] = useState<BeneficiaryInfo[] | null>(null);
+  const [currentTimestamp, setCurrentTimestamp] = useState<bigint | null>(null);
 
   const { getCapsule, claimCapsule, getMyAllocation } = useTimeCapsule();
 
@@ -32,6 +33,22 @@ export default function ReceiveCapsule() {
 
   // Validate founder address
   const isValidFounder = founder && ethers.isAddress(founder);
+
+  // Keep block timestamp in sync for accurate CountdownTimer
+  useEffect(() => {
+    async function fetchBlockTimestamp() {
+      try {
+        const ethereum = window.ethereum as ethers.Eip1193Provider | undefined;
+        if (!ethereum) return;
+        const provider = new ethers.BrowserProvider(ethereum);
+        const block = await provider.getBlock('latest');
+        if (block) setCurrentTimestamp(BigInt(Number(block.timestamp)));
+      } catch { /* ignore — CountdownTimer falls back to Date.now() */ }
+    }
+    fetchBlockTimestamp();
+    const interval = setInterval(fetchBlockTimestamp, 12000); // refresh every 12s
+    return () => clearInterval(interval);
+  }, []);
 
   async function loadCapsule(signer: ethers.JsonRpcSigner) {
     const data = await getCapsule(id, signer);
@@ -361,6 +378,7 @@ export default function ReceiveCapsule() {
             </p>
             <CountdownTimer
               unlockTimestamp={capsule!.unlockTimestamp}
+              currentTimestamp={currentTimestamp ?? undefined}
               onExpire={async () => {
                 const signer = await signerPromise;
                 if (signer) handleCountdownExpire(signer);
@@ -369,6 +387,16 @@ export default function ReceiveCapsule() {
             <p style={{ color: "var(--text-muted)", fontSize: "0.75rem", marginTop: "0.75rem" }}>
               Come back when the timer reaches zero
             </p>
+            {/* Debug time info */}
+            {currentTimestamp !== null && (
+              <div style={{ marginTop: "1rem", padding: "0.75rem", background: "rgba(0,0,0,0.2)", borderRadius: "8px", fontSize: "0.7rem", color: "var(--text-muted)", fontFamily: "monospace" }}>
+                <div style={{ marginBottom: "0.25rem", color: "#f59e0b" }}>Time Reference</div>
+                <div>Now (chain): {new Date(Number(currentTimestamp) * 1000).toLocaleString()}</div>
+                <div>Now (local):  {new Date().toLocaleString()}</div>
+                <div>Drift: {((Number(currentTimestamp) - Math.floor(Date.now() / 1000)) / 3600).toFixed(1)}h</div>
+                <div>Unlocks at: {new Date(Number(capsule!.unlockTimestamp) * 1000).toLocaleString()}</div>
+              </div>
+            )}
           </div>
         ) : (
           <div style={{ background: "rgba(34,197,94,0.08)", border: "1px solid rgba(34,197,94,0.25)", borderRadius: "12px", padding: "1.5rem", marginBottom: "1.5rem" }}>

@@ -15,7 +15,7 @@ contract TimeCapsuleVault is Ownable, ReentrancyGuard, Pausable {
 
     // ============ Constants ============
     constructor() Ownable(msg.sender) {}
-    uint256 public constant MIN_LOCK_SECONDS = 1 days;
+    uint256 public constant MIN_LOCK_SECONDS = 60 seconds;
     uint256 public constant MAX_LOCK_SECONDS = 10 * 365 days;
     uint256 public constant MIN_CREATION_FEE = 0.001 ether;
     uint256 public constant MAX_BENEFICIARIES = 10;

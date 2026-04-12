@@ -51,13 +51,13 @@ export default function DateTimePicker({ value, onChange, minDate }: DateTimePic
   const maxYear = minYear + 10;
   const daysInCurrentMonth = getDaysInMonth(year, month);
 
-  const MIN_LOCK_MS = 86400 * 1000; // 1 day minimum — must match contract MIN_LOCK_SECONDS
+  const MIN_LOCK_MS = 60 * 1000; // 60 seconds minimum — must match contract MIN_LOCK_SECONDS
 
   function notify() {
     const selected = new Date(year, month, day, hour, minute, 0);
     const nowFresh = new Date(); // always use current time, not stale closure
     if (selected.getTime() < nowFresh.getTime() + MIN_LOCK_MS) {
-      return; // Don't update if less than 1 day from now
+      return; // Don't update if less than 60 seconds from now
     }
     onChange(toISOStringLocal(selected));
   }
