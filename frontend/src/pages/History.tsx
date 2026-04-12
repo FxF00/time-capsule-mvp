@@ -25,6 +25,11 @@ function formatTimestamp(ts: Date): string {
   return ts.toLocaleString();
 }
 
+function formatUnlockDate(ts: Date): string {
+  const pad = (n: number) => String(n).padStart(2, "0");
+  return `${ts.getFullYear()}-${pad(ts.getMonth() + 1)}-${pad(ts.getDate())} ${pad(ts.getHours())}:${pad(ts.getMinutes())}:${pad(ts.getSeconds())}`;
+}
+
 function getExplorerUrl(txHash: string, chainId: number): string {
   // Polygon mainnet
   if (chainId === 137) {
@@ -144,7 +149,7 @@ function EventRow({ event, chainId }: { event: EventInfo; chainId: number }) {
         )}
         {event.unlockTimestamp && (
           <span style={{ color: "var(--accent)", fontSize: "0.7rem" }}>
-            Unlocks: {event.unlockTimestamp.toLocaleString()}
+            Unlocks: {formatUnlockDate(event.unlockTimestamp)}
           </span>
         )}
         <span style={{ color: "var(--text-muted)", fontSize: "0.75rem" }}>
