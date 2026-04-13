@@ -5,20 +5,20 @@ export const CONTRACT_ADDRESS =
   import.meta.env.VITE_CONTRACT_ADDRESS || "0x0000000000000000000000000000000000000001";
 
 // Minimal ABI for TimeCapsuleVault
+// NOTE: Capsule struct has dynamic beneficiaries[] array, so the auto-getter
+// capsules(id) returns only the fixed fields: (founder, unlockTimestamp, isWithdrawn, messageHash, depositedValue)
+// The getCapsule(id) view function also exists but returns memory struct with same field order.
 export const VAULT_ABI = [
-  // Capsule struct: founder, unlockTimestamp, isWithdrawn, messageHash, depositedValue
-  // Read struct fields
+  // Capsule struct auto-getter — fixed fields only (beneficiaries[] is dynamic, excluded)
   "function capsules(uint256) view returns (address, uint256, bool, string, uint256)",
+  // Beneficiary lookups
   "function beneficiaryIndices(uint256, address) view returns (uint256)",
-  // State
   "function isBeneficiary(uint256, address) view returns (bool)",
   // Core
   "function createCapsule(address[] calldata, uint256[] calldata, uint256, string calldata) external payable returns (uint256)",
   "function claim(uint256) external",
   "function cancelCapsule(uint256) external",
-  // Views
-  "function getCapsule(uint256) view returns (tuple(address founder, uint256 unlockTimestamp, bool isWithdrawn, string messageHash, uint256 depositedValue))",
-  "function capsules(uint256) view returns (address, uint256, bool, string, uint256)",
+  // Views — use capsules() auto-getter, NOT getCapsule() which has memory struct encoding
   "function getBeneficiaryCount(uint256) view returns (uint256)",
   "function getMyAllocation(uint256) view returns (uint256, bool)",
   "function isUnlocked(uint256) view returns (bool)",

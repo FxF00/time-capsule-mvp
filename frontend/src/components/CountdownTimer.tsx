@@ -24,17 +24,19 @@ function getTimeRemaining(unlockTs: bigint, currentTs: bigint): { days: number; 
 }
 
 export default function CountdownTimer({ unlockTimestamp, onExpire, currentTimestamp }: CountdownTimerProps) {
-  const now = currentTimestamp ?? BigInt(Math.floor(Date.now() / 1000));
-  const [remaining, setRemaining] = useState(() => getTimeRemaining(unlockTimestamp, now));
+  const [remaining, setRemaining] = useState(() => {
+    const now = currentTimestamp ?? BigInt(Math.floor(Date.now() / 1000));
+    return getTimeRemaining(unlockTimestamp, now);
+  });
 
   useEffect(() => {
-    const nowVal = currentTimestamp ?? BigInt(Math.floor(Date.now() / 1000));
-    const r = getTimeRemaining(unlockTimestamp, nowVal);
+    // Always use Date.now() for real-time ticking — currentTimestamp is only for display reference
+    const r = getTimeRemaining(unlockTimestamp, BigInt(Math.floor(Date.now() / 1000)));
     setRemaining(r);
     if (r.expired) return;
 
     const interval = setInterval(() => {
-      const nowFresh = currentTimestamp ?? BigInt(Math.floor(Date.now() / 1000));
+      const nowFresh = BigInt(Math.floor(Date.now() / 1000));
       const r2 = getTimeRemaining(unlockTimestamp, nowFresh);
       setRemaining(r2);
       if (r2.expired) {
@@ -44,7 +46,7 @@ export default function CountdownTimer({ unlockTimestamp, onExpire, currentTimes
     }, 1000);
 
     return () => clearInterval(interval);
-  }, [unlockTimestamp, onExpire, currentTimestamp]);
+  }, [unlockTimestamp, onExpire]);
 
   if (remaining.expired) {
     return (

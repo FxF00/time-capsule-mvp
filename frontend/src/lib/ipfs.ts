@@ -76,23 +76,41 @@ async function decryptMessage(
   const key = await deriveKey(beneficiary, unlockTimestamp);
 
   // Decode base64
-  const binary = atob(encryptedBase64);
-  const bytes = new Uint8Array(binary.length);
-  for (let i = 0; i < binary.length; i++) {
-    bytes[i] = binary.charCodeAt(i);
+  let bytes: Uint8Array;
+  try {
+    const binary = atob(encryptedBase64);
+    bytes = new Uint8Array(binary.length);
+    for (let i = 0; i < binary.length; i++) {
+      bytes[i] = binary.charCodeAt(i);
+    }
+  } catch {
+    throw new Error(`Decrypt: base64 decode failed for "${encryptedBase64.slice(0, 20)}..." (len=${encryptedBase64.length})`);
+  }
+
+  if (bytes.length < IV_LENGTH + 16) {
+    throw new Error(`Decrypt: ciphertext too short (${bytes.length} bytes, need ${IV_LENGTH + 16}+)`);
   }
 
   // Split IV and ciphertext
   const iv = bytes.slice(0, IV_LENGTH);
   const ciphertext = bytes.slice(IV_LENGTH);
 
-  const decrypted = await crypto.subtle.decrypt(
-    { name: ALGORITHM, iv },
-    key,
-    ciphertext
-  );
+  let decrypted: ArrayBuffer;
+  try {
+    decrypted = await crypto.subtle.decrypt(
+      { name: ALGORITHM, iv },
+      key,
+      ciphertext
+    );
+  } catch (e: any) {
+    throw new Error(`Decrypt: AES-GCM auth failed — wrong key or corrupted data (${e.message || e})`);
+  }
 
-  return new TextDecoder().decode(decrypted);
+  try {
+    return new TextDecoder().decode(decrypted);
+  } catch {
+    throw new Error("Decrypt: UTF-8 decode failed — wrong key or corrupt plaintext");
+  }
 }
 
 // ─── IPFS Upload (public gateway, no registration) ─────────────────────────
@@ -150,7 +168,9 @@ export async function decryptStoredMessage(
 ): Promise<string> {
   let encrypted: string;
 
-  if (messageHash && !messageHash.startsWith("bafy") && !messageHash.startsWith("Qm")) {
+  const isIpfsCid = messageHash?.startsWith("bafy") || messageHash?.startsWith("Qm");
+
+  if (messageHash && !isIpfsCid) {
     // It's a base64 encoded encrypted content directly stored
     encrypted = messageHash;
   } else if (messageHash) {
@@ -160,14 +180,13 @@ export async function decryptStoredMessage(
       if (response.ok) {
         encrypted = await response.text();
       } else {
-        throw new Error("IPFS fetch failed");
+        throw new Error(`IPFS fetch failed (${response.status})`);
       }
-    } catch {
-      // If IPFS unavailable, try encryptedContent parameter
+    } catch (e: any) {
       if (encryptedContent) {
         encrypted = encryptedContent;
       } else {
-        throw new Error("IPFS gateway unavailable and no local encrypted content provided");
+        throw new Error(`IPFS unavailable: ${e.message}`);
       }
     }
   } else if (encryptedContent) {
@@ -176,5 +195,9 @@ export async function decryptStoredMessage(
     throw new Error("No message to decrypt");
   }
 
-  return decryptMessage(beneficiary, unlockTimestamp, encrypted);
+  try {
+    return await decryptMessage(beneficiary, unlockTimestamp, encrypted);
+  } catch (e: any) {
+    throw new Error(`Decryption failed: ${e.message}`);
+  }
 }

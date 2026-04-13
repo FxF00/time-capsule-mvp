@@ -17,7 +17,15 @@ const config: HardhatUserConfig = {
     }
   },
   networks: {
-    hardhat: { chainId: 31337 },
+    hardhat: {
+      chainId: 31337,
+      // Start blockchain time at real current time (seconds)
+      time: new Date(Math.floor(Date.now() / 1000) * 1000),
+      mining: {
+        auto: true,
+        interval: 5000, // mine a block every 5 seconds to keep time in sync
+      },
+    },
     mumbai: {
       url: POLYGON_MUMBAI_RPC,
       accounts: [PRIVATE_KEY],

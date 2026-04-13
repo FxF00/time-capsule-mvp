@@ -35,6 +35,11 @@ function computeLockSeconds(unlockDatetime: string): number {
   return Math.max(0, Math.floor((unlock - now) / 1000));
 }
 
+function computeLockSecondsFromChain(unlockDatetime: string, blockTimestampSec: number): number {
+  const unlock = Math.floor(new Date(unlockDatetime).getTime() / 1000);
+  return Math.max(0, unlock - blockTimestampSec);
+}
+
 function formatLockDuration(seconds: number): string {
   if (seconds < 60) return `${seconds}s`;
   if (seconds < 3600) return `${Math.floor(seconds / 60)}m`;
@@ -52,6 +57,7 @@ export default function CreateCapsule() {
   const { setNetwork, setProvider } = useNetwork();
   const [gasEstimate, setGasEstimate] = useState<GasEstimateResult | null>(null);
   const { showToast } = useToast();
+  const [currentTimestamp, setCurrentTimestamp] = useState<bigint | null>(null);
 
   // Default unlock: now + 60 seconds (timezone-aware ISO string)
   const defaultUnlock = new Date(Date.now() + 60000);
@@ -120,6 +126,22 @@ export default function CreateCapsule() {
       }
     }
   }
+
+  // Keep chain timestamp in sync — empty deps so interval runs independently of signer state
+  useEffect(() => {
+    async function fetchBlockTimestamp() {
+      try {
+        const ethereum = window.ethereum as ethers.Eip1193Provider | undefined;
+        if (!ethereum) return;
+        const provider = new ethers.BrowserProvider(ethereum);
+        const block = await provider.getBlock('latest');
+        if (block) setCurrentTimestamp(BigInt(Number(block.timestamp)));
+      } catch { /* ignore — CountdownTimer falls back to Date.now() */ }
+    }
+    fetchBlockTimestamp();
+    const interval = setInterval(fetchBlockTimestamp, 12000);
+    return () => clearInterval(interval);
+  }, []);
 
   async function updateGasEstimate() {
     if (!signer || !walletAddress) {
@@ -295,7 +317,8 @@ export default function CreateCapsule() {
     );
   }
 
-  const lockSeconds = computeLockSeconds(form.unlockDatetime);
+  const blockTimestampSec = currentTimestamp !== null ? Number(currentTimestamp) : Math.floor(Date.now() / 1000);
+  const lockSeconds = computeLockSecondsFromChain(form.unlockDatetime, blockTimestampSec);
 
   return (
     <div>
@@ -512,7 +535,7 @@ export default function CreateCapsule() {
               value={form.unlockDatetime}
               onChange={(iso) => setForm({ ...form, unlockDatetime: iso })}
             />
-            <div style={{ marginTop: "0.5rem", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+            <div style={{ marginTop: "0.5rem", display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: "0.5rem" }}>
               <span style={{ color: lockSeconds < 60 ? "#ef4444" : "var(--text-muted)", fontSize: "0.8rem" }}>
                 {lockSeconds < 60
                   ? "Must be in the future"
@@ -522,6 +545,13 @@ export default function CreateCapsule() {
                 {new Date(form.unlockDatetime).toLocaleString()}
               </span>
             </div>
+            {/* Chain time reference */}
+            {currentTimestamp !== null && (
+              <div style={{ marginTop: "0.4rem", fontSize: "0.7rem", color: "var(--text-muted)", fontFamily: "monospace" }}>
+                <span style={{ color: "#f59e0b" }}>Now (chain): </span>{new Date(Number(currentTimestamp) * 1000).toLocaleString()}
+                <span style={{ marginLeft: "0.75rem", color: "#f59e0b" }}>Drift: </span>{((Number(currentTimestamp) - Math.floor(Date.now() / 1000)) / 3600).toFixed(1)}h
+              </div>
+            )}
           </div>
 
           {/* ETH Amount */}
