@@ -159,13 +159,12 @@ export default function CreateCapsule() {
     const block = await signer.provider.getBlock('latest');
     if (!block) return;
     const blockTimestampSec = Number(block.timestamp);
-    const unlockSec = Math.floor(new Date(form.unlockDatetime).getTime() / 1000);
-    const lockSeconds = Math.max(300, unlockSec - blockTimestampSec);
-    const unlockTimestamp = BigInt(blockTimestampSec + lockSeconds);
+    const userUnlockSec = Math.floor(new Date(form.unlockDatetime).getTime() / 1000);
+    const unlockTimestamp = BigInt(Math.max(userUnlockSec, blockTimestampSec + 300));
 
     // Validate — must match contract's MIN_LOCK_SECONDS (60s) but we use 300s to be safe
     const isValidAddresses = addresses.every((addr) => ethers.isAddress(addr));
-    if (!isValidAddresses || lockSeconds < 300 || totalAllocation !== 100) {
+    if (!isValidAddresses || userUnlockSec < blockTimestampSec + 300 || totalAllocation !== 100) {
       setGasEstimate(null);
       return;
     }
@@ -224,8 +223,8 @@ export default function CreateCapsule() {
     if (!block) return;
     const blockTimestampSec = Number(block.timestamp);
     const userUnlockSec = Math.floor(new Date(form.unlockDatetime).getTime() / 1000);
-    const lockSeconds = Math.max(300, userUnlockSec - blockTimestampSec);
-    const unlockTimestamp = BigInt(blockTimestampSec + lockSeconds);
+    const unlockTimestamp = BigInt(Math.max(userUnlockSec, blockTimestampSec + 300));
+    const lockSeconds = Number(unlockTimestamp) - blockTimestampSec;
 
     // Validate addresses
     const addresses = form.beneficiaries.map((b) => b.address.trim());
@@ -300,6 +299,9 @@ export default function CreateCapsule() {
             })),
           };
           sessionStorage.setItem(`capsule_beneficiaries_${walletAddress}_${capsule.id}`, JSON.stringify(capsuleData));
+          // Store primary beneficiary address so ClaimCapsule can gate decrypt access correctly.
+          // The message is encrypted with addresses[0] + unlockTimestamp — only that address can decrypt.
+          sessionStorage.setItem(`capsule_${capsule.founder}_${capsule.id}_primary_beneficiary`, addresses[0]);
         } catch (err) {
           // sessionStorage may be unavailable
         }
@@ -326,7 +328,7 @@ export default function CreateCapsule() {
     ? Date.UTC(Number(dateMatch[1]), Number(dateMatch[2]) - 1, Number(dateMatch[3]), Number(dateMatch[4]), Number(dateMatch[5])) / 1000
     : Math.floor(Date.now() / 1000);
   const rawLockSeconds = userUnlockSec - blockTimestampSec;
-  const lockSeconds = rawLockSeconds < 300 ? null : rawLockSeconds;
+  const lockSeconds = rawLockSeconds < 0 ? null : Math.max(rawLockSeconds, 300);
 
   return (
     <div>
@@ -347,6 +349,22 @@ export default function CreateCapsule() {
       {createdCapsule ? (
         <div>
           <CapsuleCard capsule={createdCapsule} />
+          {/* Show the actual stored unlock time — this is what the contract recorded */}
+          <div style={{ marginTop: "0.75rem", padding: "0.75rem", background: "rgba(124,58,237,0.08)", border: "1px solid rgba(124,58,237,0.2)", borderRadius: "8px", fontSize: "0.85rem" }}>
+            <span style={{ color: "var(--text-muted)" }}>Stored unlock time: </span>
+            <span style={{ color: "var(--accent)", fontFamily: "monospace", fontWeight: 600 }}>
+              {(() => {
+                const ts = Number(createdCapsule.unlockTimestamp);
+                if (isNaN(ts) || ts <= 0) return "Unlocked";
+                const d = new Date(ts * 1000);
+                const pad = (n: number) => String(n).padStart(2, "0");
+                return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`;
+              })()}
+            </span>
+            <span style={{ color: "var(--text-muted)", fontSize: "0.75rem", marginLeft: "0.5rem" }}>
+              (finalized at transaction time)
+            </span>
+          </div>
           <p style={{ color: "var(--success)", marginTop: "1rem", fontWeight: 600 }}>
             {txHash}
           </p>
@@ -542,6 +560,7 @@ export default function CreateCapsule() {
             <DateTimePicker
               value={form.unlockDatetime}
               onChange={(iso) => setForm({ ...form, unlockDatetime: iso })}
+              chainTimestamp={currentTimestamp}
             />
             <div style={{ marginTop: "0.5rem", display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: "0.5rem" }}>
               <span style={{ color: lockSeconds === null ? "#ef4444" : "var(--text-muted)", fontSize: "0.8rem" }}>
@@ -563,6 +582,9 @@ export default function CreateCapsule() {
                 <span style={{ marginLeft: "0.75rem", color: "#f59e0b" }}>Drift: </span>{((Number(currentTimestamp) - Math.floor(Date.now() / 1000)) / 3600).toFixed(1)}h
               </div>
             )}
+            <p style={{ color: "var(--text-muted)", fontSize: "0.75rem", marginTop: "0.4rem" }}>
+              This is your selected time. The actual stored time may shift slightly based on network confirmation (min 5 min lock).
+            </p>
           </div>
 
           {/* ETH Amount */}

@@ -1,10 +1,11 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 
 interface DateTimePickerProps {
   value: string; // ISO datetime string
   onChange: (isoString: string) => void;
   minDate?: string; // ISO date string (YYYY-MM-DD)
-  minTime?: string; // HH:MM
+  minTime?: string; // HH:MM — time-of-day lower bound
+  chainTimestamp?: bigint | null; // on-chain block.timestamp (seconds); used as reference instead of Date.now()
 }
 
 const MONTHS = [
@@ -37,16 +38,29 @@ function toISOStringLocal(date: Date): string {
   );
 }
 
-export default function DateTimePicker({ value, onChange, minDate }: DateTimePickerProps) {
-  // Parse value into components, default to now+1min if empty
-  const initialDate = value ? new Date(value) : new Date(Date.now() + 60000);
+export default function DateTimePicker({ value, onChange, minDate, minTime, chainTimestamp }: DateTimePickerProps) {
+  // Use chain time as reference when available, fall back to browser time
+  const refMs = chainTimestamp != null ? Number(chainTimestamp) * 1000 : Date.now();
+  // Parse value into components, default to ref+1min if empty
+  const initialDate = value ? new Date(value) : new Date(refMs + 60000);
   const [year, setYear] = useState(initialDate.getFullYear());
   const [month, setMonth] = useState(initialDate.getMonth());
   const [day, setDay] = useState(initialDate.getDate());
   const [hour, setHour] = useState(initialDate.getHours());
   const [minute, setMinute] = useState(initialDate.getMinutes());
 
-  const now = new Date();
+  // Re-sync internal state when value prop changes (e.g., after parent updates datetime)
+  useEffect(() => {
+    if (!value) return;
+    const d = new Date(value);
+    setYear(d.getFullYear());
+    setMonth(d.getMonth());
+    setDay(d.getDate());
+    setHour(d.getHours());
+    setMinute(d.getMinutes());
+  }, [value]);
+
+  const now = new Date(refMs);
   const minYear = now.getFullYear();
   const maxYear = minYear + 10;
   const daysInCurrentMonth = getDaysInMonth(year, month);
@@ -55,10 +69,31 @@ export default function DateTimePicker({ value, onChange, minDate }: DateTimePic
 
   function notify() {
     const selected = new Date(year, month, day, hour, minute, 0);
-    const nowFresh = new Date(); // always use current time, not stale closure
-    if (selected.getTime() < nowFresh.getTime() + MIN_LOCK_MS) {
-      // Clamp to minimum valid time instead of silently failing — prevents stale form state
-      const minValid = new Date(nowFresh.getTime() + MIN_LOCK_MS);
+    // Use chain time as reference when available, not stale closure of browser time
+    const refMsFresh = chainTimestamp != null ? Number(chainTimestamp) * 1000 : Date.now();
+    let minValid = new Date(refMsFresh + MIN_LOCK_MS);
+
+    // Apply minTime (HH:MM) as an additional time-of-day lower bound on the selected date
+    if (minTime) {
+      const [minH, minM] = minTime.split(":").map(Number);
+      const minTimeOnDay = new Date(year, month, day, minH, minM, 0);
+      if (minTimeOnDay.getTime() > minValid.getTime()) {
+        minValid = minTimeOnDay;
+      }
+    }
+
+    if (selected.getTime() < minValid.getTime()) {
+      // Clamp to minimum valid time and update internal state so dropdowns match emitted value
+      const newYear = minValid.getFullYear();
+      const newMonth = minValid.getMonth();
+      const newDay = minValid.getDate();
+      const newHour = minValid.getHours();
+      const newMinute = Math.ceil(minValid.getMinutes() / 5) * 5; // round up to next 5-min increment
+      setYear(newYear);
+      setMonth(newMonth);
+      setDay(newDay);
+      setHour(newHour);
+      setMinute(newMinute);
       onChange(toISOStringLocal(minValid));
       return;
     }

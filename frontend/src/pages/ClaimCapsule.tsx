@@ -259,47 +259,69 @@ export default function ClaimCapsule() {
           )}
 
           {/* Message decryption — available after unlock regardless of claim status */}
-          {capsule.messageHash && (
-            <div style={{ background: "rgba(30,30,50,0.8)", border: "1px solid var(--border)", borderRadius: "8px", padding: "1rem" }}>
-              <p style={{ color: "var(--text-muted)", fontSize: "0.85rem", marginBottom: "0.75rem" }}>
-                Encrypted Message
-              </p>
-              {decryptedMessage ? (
-                <div>
-                  <p style={{ color: "var(--text)", fontSize: "0.95rem", whiteSpace: "pre-wrap", background: "rgba(34,197,94,0.05)", padding: "0.75rem", borderRadius: "6px", border: "1px solid rgba(34,197,94,0.2)" }}>
-                    {decryptedMessage}
+          {capsule.messageHash && (() => {
+            // Determine if the connected wallet is the primary beneficiary (the one the message was encrypted for).
+            // CreateCapsule stores this in sessionStorage keyed by founder + capsule id.
+            let primaryBeneficiary: string | null = null;
+            try {
+              primaryBeneficiary = sessionStorage.getItem(`capsule_${capsule.founder}_${capsule.id}_primary_beneficiary`);
+            } catch { /* sessionStorage may be unavailable */ }
+
+            // If we know the primary beneficiary and the connected wallet is NOT them, gate access.
+            const isPrimaryBeneficiary =
+              !primaryBeneficiary ||
+              walletAddress?.toLowerCase() === primaryBeneficiary.toLowerCase();
+
+            return (
+              <div style={{ background: "rgba(30,30,50,0.8)", border: "1px solid var(--border)", borderRadius: "8px", padding: "1rem" }}>
+                <p style={{ color: "var(--text-muted)", fontSize: "0.85rem", marginBottom: "0.75rem" }}>
+                  Encrypted Message
+                </p>
+                {!isPrimaryBeneficiary ? (
+                  <p style={{ color: "var(--text-muted)", fontSize: "0.85rem" }}>
+                    This message was encrypted for the primary beneficiary (
+                    <span style={{ fontFamily: "monospace", color: "var(--accent)" }}>
+                      {primaryBeneficiary!.slice(0, 6)}...{primaryBeneficiary!.slice(-4)}
+                    </span>
+                    ) only. Connect with that wallet to decrypt it.
                   </p>
-                </div>
-              ) : (
-                <button
-                  onClick={handleDecryptMessage}
-                  disabled={decrypting}
-                  style={{
-                    background: "transparent",
-                    color: "var(--accent-light)",
-                    border: "1px solid var(--accent-light)",
-                    borderRadius: "8px",
-                    padding: "0.5rem 1rem",
-                    fontSize: "0.85rem",
-                    cursor: decrypting ? "not-allowed" : "pointer",
-                    opacity: decrypting ? 0.7 : 1,
-                  }}
-                >
-                  {decrypting ? "Decrypting..." : "Decrypt Message"}
-                </button>
-              )}
-              {decryptError && (
-                <p style={{ color: "#ef4444", fontSize: "0.8rem", marginTop: "0.5rem" }}>
-                  Decryption failed: {decryptError}
-                </p>
-              )}
-              {!capsule.isUnlocked && !decryptedMessage && (
-                <p style={{ color: "var(--text-muted)", fontSize: "0.75rem", marginTop: "0.4rem" }}>
-                  Capsule must be unlocked before you can decrypt the message.
-                </p>
-              )}
-            </div>
-          )}
+                ) : decryptedMessage ? (
+                  <div>
+                    <p style={{ color: "var(--text)", fontSize: "0.95rem", whiteSpace: "pre-wrap", background: "rgba(34,197,94,0.05)", padding: "0.75rem", borderRadius: "6px", border: "1px solid rgba(34,197,94,0.2)" }}>
+                      {decryptedMessage}
+                    </p>
+                  </div>
+                ) : (
+                  <button
+                    onClick={handleDecryptMessage}
+                    disabled={decrypting}
+                    style={{
+                      background: "transparent",
+                      color: "var(--accent-light)",
+                      border: "1px solid var(--accent-light)",
+                      borderRadius: "8px",
+                      padding: "0.5rem 1rem",
+                      fontSize: "0.85rem",
+                      cursor: decrypting ? "not-allowed" : "pointer",
+                      opacity: decrypting ? 0.7 : 1,
+                    }}
+                  >
+                    {decrypting ? "Decrypting..." : "Decrypt Message"}
+                  </button>
+                )}
+                {decryptError && (
+                  <p style={{ color: "#ef4444", fontSize: "0.8rem", marginTop: "0.5rem" }}>
+                    Decryption failed: {decryptError}
+                  </p>
+                )}
+                {!capsule.isUnlocked && !decryptedMessage && isPrimaryBeneficiary && (
+                  <p style={{ color: "var(--text-muted)", fontSize: "0.75rem", marginTop: "0.4rem" }}>
+                    Capsule must be unlocked before you can decrypt the message.
+                  </p>
+                )}
+              </div>
+            );
+          })()}
 
           <button
             onClick={() => { setCapsule(null); setCapsuleId(""); setMyAllocation(null); setDecryptedMessage(null); setDecryptError(null); setClaimGasEstimate(null); }}
