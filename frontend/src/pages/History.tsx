@@ -210,19 +210,32 @@ export default function History() {
 
           if (eventName === "CapsuleCreated") {
             type = "created";
-            // topics[1] = capsuleId, topics[2] = founder; args[0] = unlockTimestamp, args[1] = value
-            founder = eventLog.topics[2] ? "0x" + eventLog.topics[2].slice(26) : "";
-            amount = args[1] ? ethers.formatEther(args[1]) : "0";
-            if (args[0]) unlockTimestamp = new Date(Number(args[0]) * 1000);
+            // topics[1] = capsuleId (indexed), topics[2] = founder (indexed, address)
+            // args[0] = unlockTimestamp (uint256), args[1] = value (uint256 in wei), args[2] = messageHash (string)
+            founder = eventLog.topics[2] ? ethers.getAddress("0x" + eventLog.topics[2].slice(-20)) : "";
+            // Extract value from args[1] — handle BigInt safely
+            if (args[1] != null) {
+              const valBn = typeof args[1] === "bigint" ? args[1] : BigInt(args[1].toString());
+              amount = ethers.formatEther(valBn);
+            }
+            // Extract unlockTimestamp from args[0] — handle BigInt safely
+            if (args[0] != null) {
+              const unlockBn = typeof args[0] === "bigint" ? args[0] : BigInt(args[0].toString());
+              unlockTimestamp = new Date(Number(unlockBn) * 1000);
+            }
           } else if (eventName === "WithdrawalClaimed") {
             type = "claimed";
-            // topics[1] = capsuleId, topics[2] = beneficiary; args[0] = amount
-            beneficiary = eventLog.topics[2] ? "0x" + eventLog.topics[2].slice(26) : "";
-            amount = args[0] ? ethers.formatEther(args[0]) : "0";
+            // topics[1] = capsuleId (indexed), topics[2] = beneficiary (indexed)
+            // args[0] = amount (uint256 in wei)
+            beneficiary = eventLog.topics[2] ? ethers.getAddress("0x" + eventLog.topics[2].slice(-20)) : "";
+            if (args[0] != null) {
+              const valBn = typeof args[0] === "bigint" ? args[0] : BigInt(args[0].toString());
+              amount = ethers.formatEther(valBn);
+            }
           } else if (eventName === "CapsuleCancelled") {
             type = "cancelled";
-            // topics[1] = capsuleId, topics[2] = founder
-            founder = eventLog.topics[2] ? "0x" + eventLog.topics[2].slice(26) : "";
+            // topics[1] = capsuleId (indexed), topics[2] = founder (indexed)
+            founder = eventLog.topics[2] ? ethers.getAddress("0x" + eventLog.topics[2].slice(-20)) : "";
           } else if (eventName === "BeneficiaryAdded") {
             continue;
           }
