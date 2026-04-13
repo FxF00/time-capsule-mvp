@@ -61,10 +61,11 @@ export type GasEstimateResult = GasEstimate | GasEstimateError;
 export async function estimateGas(
   signer: ethers.JsonRpcSigner,
   fn: any,
-  ...args: any[]
+  args: any[],
+  txOptions?: any
 ): Promise<GasEstimateResult> {
   try {
-    const estimate = await fn.estimateGas(...args);
+    const estimate = await fn.estimateGas(...args, txOptions || {});
     const feeData = await signer.provider!.getFeeData();
     const gasPrice = feeData.gasPrice || BigInt(0);
     const costEth = Number(ethers.formatEther(estimate * gasPrice));

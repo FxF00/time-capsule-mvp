@@ -68,7 +68,7 @@ export default function ClaimCapsule() {
     if (allocationData && !allocationData.claimed && capsuleData.isUnlocked && signer) {
       try {
         const contract = getVaultContract(signer) as ethers.Contract;
-        const result = await estimateGas(signer, contract.claim, id);
+        const result = await estimateGas(signer, contract.claim, [id]);
         setClaimGasEstimate(result);
       } catch (err: any) {
         setClaimGasEstimate({ success: false, error: err.message || "Gas estimation failed" });

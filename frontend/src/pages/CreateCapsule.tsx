@@ -151,34 +151,32 @@ export default function CreateCapsule() {
 
     const addresses = form.beneficiaries.map((b) => b.address.trim());
     const allocations = form.beneficiaries.map((b) => Number(b.allocation));
-    // Use block.timestamp instead of Date.now() to avoid clock drift between browser and Hardhat.
-    // Add a 60s buffer to lockSeconds so the value survives block advancement during estimateGas.
+    const value = ethers.parseEther(form.ethAmount || "0");
+
+    // Use block.timestamp as reference — never Date.now() which can drift from chain time.
+    // Add 300s buffer so unlockTimestamp survives block advancement during estimateGas
+    // (Hardhat auto-mines every 5s; without buffer the contract validation fails).
     const block = await signer.provider.getBlock('latest');
     if (!block) return;
     const blockTimestampSec = Number(block.timestamp);
     const unlockSec = Math.floor(new Date(form.unlockDatetime).getTime() / 1000);
-    const lockSeconds = Math.max(120, unlockSec - blockTimestampSec); // 120s min to survive estimateGas
+    const lockSeconds = Math.max(300, unlockSec - blockTimestampSec);
     const unlockTimestamp = BigInt(blockTimestampSec + lockSeconds);
-    const value = ethers.parseEther(form.ethAmount || "0");
 
-    // Validate basic conditions for gas estimation
+    // Validate — must match contract's MIN_LOCK_SECONDS (60s) but we use 300s to be safe
     const isValidAddresses = addresses.every((addr) => ethers.isAddress(addr));
-    const MIN_LOCK_SECONDS = 60; // 60 seconds — must match contract
-    if (!isValidAddresses || lockSeconds < MIN_LOCK_SECONDS || totalAllocation !== 100) {
+    if (!isValidAddresses || lockSeconds < 300 || totalAllocation !== 100) {
       setGasEstimate(null);
       return;
     }
 
     try {
       const contract = getVaultContract(signer) as ethers.Contract;
+      // ABI: createCapsule(address[] calldata, uint256[] calldata, uint256 unlockTimestamp, string calldata)
       const result = await estimateGas(
         signer,
         contract.createCapsule,
-        addresses,
-        allocations,
-        unlockTimestamp, // contract expects unlockTimestamp, not lockDurationSeconds
-        "",
-        "",
+        [addresses, allocations, unlockTimestamp, ""],
         { value }
       );
       setGasEstimate(result);
