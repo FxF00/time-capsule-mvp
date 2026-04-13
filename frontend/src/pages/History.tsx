@@ -210,9 +210,10 @@ export default function History() {
 
           if (eventName === "CapsuleCreated") {
             type = "created";
-            // topics[1] = capsuleId (indexed), topics[2] = founder (indexed, address)
+            // topics[1] = capsuleId (indexed), topics[2] = founder (indexed, 32-byte address)
             // args[0] = unlockTimestamp (uint256), args[1] = value (uint256 in wei), args[2] = messageHash (string)
-            founder = eventLog.topics[2] ? ethers.getAddress("0x" + eventLog.topics[2].slice(-20)) : "";
+            // Solidity address in topics is 32 bytes (64 hex chars) — take last 40 chars to get 20-byte address
+            founder = eventLog.topics[2] ? ethers.getAddress("0x" + eventLog.topics[2].slice(-40)) : "";
             // Extract value from args[1] — handle BigInt safely
             if (args[1] != null) {
               const valBn = typeof args[1] === "bigint" ? args[1] : BigInt(args[1].toString());
@@ -225,17 +226,17 @@ export default function History() {
             }
           } else if (eventName === "WithdrawalClaimed") {
             type = "claimed";
-            // topics[1] = capsuleId (indexed), topics[2] = beneficiary (indexed)
+            // topics[1] = capsuleId (indexed), topics[2] = beneficiary (indexed, 32-byte address)
             // args[0] = amount (uint256 in wei)
-            beneficiary = eventLog.topics[2] ? ethers.getAddress("0x" + eventLog.topics[2].slice(-20)) : "";
+            beneficiary = eventLog.topics[2] ? ethers.getAddress("0x" + eventLog.topics[2].slice(-40)) : "";
             if (args[0] != null) {
               const valBn = typeof args[0] === "bigint" ? args[0] : BigInt(args[0].toString());
               amount = ethers.formatEther(valBn);
             }
           } else if (eventName === "CapsuleCancelled") {
             type = "cancelled";
-            // topics[1] = capsuleId (indexed), topics[2] = founder (indexed)
-            founder = eventLog.topics[2] ? ethers.getAddress("0x" + eventLog.topics[2].slice(-20)) : "";
+            // topics[1] = capsuleId (indexed), topics[2] = founder (indexed, 32-byte address)
+            founder = eventLog.topics[2] ? ethers.getAddress("0x" + eventLog.topics[2].slice(-40)) : "";
           } else if (eventName === "BeneficiaryAdded") {
             continue;
           }

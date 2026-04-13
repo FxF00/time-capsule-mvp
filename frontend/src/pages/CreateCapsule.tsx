@@ -320,7 +320,9 @@ export default function CreateCapsule() {
   }
 
   const blockTimestampSec = currentTimestamp !== null ? Number(currentTimestamp) : Math.floor(Date.now() / 1000);
-  const lockSeconds = computeLockSecondsFromChain(form.unlockDatetime, blockTimestampSec);
+  // Use the same clamped formula as submit/gasEstimate so display matches what contract stores
+  const userUnlockSec = Math.floor(new Date(form.unlockDatetime).getTime() / 1000);
+  const lockSeconds = Math.max(300, userUnlockSec - blockTimestampSec);
 
   return (
     <div>

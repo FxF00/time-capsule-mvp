@@ -57,7 +57,10 @@ export default function DateTimePicker({ value, onChange, minDate }: DateTimePic
     const selected = new Date(year, month, day, hour, minute, 0);
     const nowFresh = new Date(); // always use current time, not stale closure
     if (selected.getTime() < nowFresh.getTime() + MIN_LOCK_MS) {
-      return; // Don't update if less than 60 seconds from now
+      // Clamp to minimum valid time instead of silently failing — prevents stale form state
+      const minValid = new Date(nowFresh.getTime() + MIN_LOCK_MS);
+      onChange(toISOStringLocal(minValid));
+      return;
     }
     onChange(toISOStringLocal(selected));
   }
