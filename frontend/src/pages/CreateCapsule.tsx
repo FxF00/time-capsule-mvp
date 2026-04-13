@@ -320,9 +320,13 @@ export default function CreateCapsule() {
   }
 
   const blockTimestampSec = currentTimestamp !== null ? Number(currentTimestamp) : Math.floor(Date.now() / 1000);
-  // Use the same clamped formula as submit/gasEstimate so display matches what contract stores
-  const userUnlockSec = Math.floor(new Date(form.unlockDatetime).getTime() / 1000);
-  const lockSeconds = Math.max(300, userUnlockSec - blockTimestampSec);
+  // Parse the local datetime components directly from the ISO string to avoid UTC interpretation issues
+  const dateMatch = form.unlockDatetime.match(/^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2})/);
+  const userUnlockSec = dateMatch
+    ? Date.UTC(Number(dateMatch[1]), Number(dateMatch[2]) - 1, Number(dateMatch[3]), Number(dateMatch[4]), Number(dateMatch[5])) / 1000
+    : Math.floor(Date.now() / 1000);
+  const rawLockSeconds = userUnlockSec - blockTimestampSec;
+  const lockSeconds = rawLockSeconds < 300 ? null : rawLockSeconds;
 
   return (
     <div>
@@ -540,13 +544,16 @@ export default function CreateCapsule() {
               onChange={(iso) => setForm({ ...form, unlockDatetime: iso })}
             />
             <div style={{ marginTop: "0.5rem", display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: "0.5rem" }}>
-              <span style={{ color: lockSeconds < 300 ? "#ef4444" : "var(--text-muted)", fontSize: "0.8rem" }}>
-                {lockSeconds < 300
-                  ? "Must be at least 5 minutes away"
+              <span style={{ color: lockSeconds === null ? "#ef4444" : "var(--text-muted)", fontSize: "0.8rem" }}>
+                {lockSeconds === null
+                  ? "Selected time has passed or is too close — please choose a future time at least 5 minutes away"
                   : `Lock duration: ${formatLockDuration(lockSeconds)}`}
               </span>
               <span style={{ color: "var(--text-muted)", fontSize: "0.8rem" }}>
-                {new Date(form.unlockDatetime).toLocaleString()}
+                {(() => {
+                  const m = form.unlockDatetime.match(/^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2})/);
+                  return m ? new Date(Number(m[1]), Number(m[2]) - 1, Number(m[3]), Number(m[4]), Number(m[5])).toLocaleString() : form.unlockDatetime;
+                })()}
               </span>
             </div>
             {/* Chain time reference */}
@@ -632,7 +639,7 @@ export default function CreateCapsule() {
 
           <button
             type="submit"
-            disabled={loading || uploading || lockSeconds < 300 || !isAllocationValid}
+            disabled={loading || uploading || lockSeconds === null || !isAllocationValid}
             style={{
               background: "var(--accent)",
               color: "#fff",
@@ -641,8 +648,8 @@ export default function CreateCapsule() {
               padding: "1rem",
               fontSize: "1rem",
               fontWeight: 600,
-              cursor: loading || uploading || lockSeconds < 300 || !isAllocationValid ? "not-allowed" : "pointer",
-              opacity: loading || uploading || lockSeconds < 300 || !isAllocationValid ? 0.7 : 1,
+              cursor: loading || uploading || lockSeconds === null || !isAllocationValid ? "not-allowed" : "pointer",
+              opacity: loading || uploading || lockSeconds === null || !isAllocationValid ? 0.7 : 1,
             }}
           >
             {uploading ? "Encrypting & uploading..." : loading ? "Creating..." : "Create Capsule"}
