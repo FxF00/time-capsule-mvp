@@ -17,7 +17,7 @@ export interface CapsuleView {
 export interface CreateCapsuleParams {
   beneficiaryAddresses: string[];
   allocations: number[];
-  lockDurationSeconds: number;
+  unlockTimestamp: bigint; // exact Unix timestamp used for key derivation
   messageHash: string;
   value: string; // ETH as string (e.g. "0.1")
 }
@@ -81,7 +81,7 @@ export function useTimeCapsule() {
         const tx = await contract.createCapsule(
           params.beneficiaryAddresses,
           params.allocations,
-          params.lockDurationSeconds,
+          params.unlockTimestamp,
           params.messageHash,
           { value }
         );

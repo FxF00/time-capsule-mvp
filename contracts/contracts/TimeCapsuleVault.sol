@@ -75,21 +75,21 @@ contract TimeCapsuleVault is Ownable, ReentrancyGuard, Pausable {
     /// @notice Create a new time capsule vault
     /// @param beneficiaryAddresses Array of beneficiary addresses
     /// @param allocations Array of allocation percentages (must sum to 100)
-    /// @param lockDurationSeconds How long until the capsule unlocks
+    /// @param unlockTimestamp The exact Unix timestamp when the capsule unlocks (used for key derivation — must be in the future)
     /// @param messageHash IPFS CID of the optional message (empty string = no message)
     /// @return capsuleId The ID of the newly created capsule
     function createCapsule(
         address[] calldata beneficiaryAddresses,
         uint256[] calldata allocations,
-        uint256 lockDurationSeconds,
+        uint256 unlockTimestamp,
         string calldata messageHash
     ) external payable whenNotPaused returns (uint256 capsuleId) {
         // Validate
         if (beneficiaryAddresses.length == 0) revert ZeroAddress();
         if (beneficiaryAddresses.length > MAX_BENEFICIARIES) revert TooManyBeneficiaries();
         if (beneficiaryAddresses.length != allocations.length) revert MismatchLength();
-        if (lockDurationSeconds < MIN_LOCK_SECONDS) revert LockTooShort();
-        if (lockDurationSeconds > MAX_LOCK_SECONDS) revert LockTooLong();
+        if (unlockTimestamp < block.timestamp + MIN_LOCK_SECONDS) revert LockTooShort();
+        if (unlockTimestamp > block.timestamp + MAX_LOCK_SECONDS) revert LockTooLong();
         if (msg.value < MIN_CREATION_FEE) revert InsufficientFee();
 
         uint256 totalAlloc = 0;
@@ -102,7 +102,7 @@ contract TimeCapsuleVault is Ownable, ReentrancyGuard, Pausable {
         capsuleId = capsules.length;
         Capsule storage c = capsules.push();
         c.founder = msg.sender;
-        c.unlockTimestamp = block.timestamp + lockDurationSeconds;
+        c.unlockTimestamp = unlockTimestamp;
         c.isWithdrawn = false;
         c.messageHash = messageHash;
         c.depositedValue = msg.value;

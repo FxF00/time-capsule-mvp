@@ -15,7 +15,7 @@ export const VAULT_ABI = [
   "function beneficiaryIndices(uint256, address) view returns (uint256)",
   "function isBeneficiary(uint256, address) view returns (bool)",
   // Core
-  "function createCapsule(address[] calldata, uint256[] calldata, uint256, string calldata) external payable returns (uint256)",
+  "function createCapsule(address[] calldata, uint256[] calldata, uint256 unlockTimestamp, string calldata) external payable returns (uint256)",
   "function claim(uint256) external",
   "function cancelCapsule(uint256) external",
   // Views — use capsules() auto-getter, NOT getCapsule() which has memory struct encoding

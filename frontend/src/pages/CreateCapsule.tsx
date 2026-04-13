@@ -151,12 +151,13 @@ export default function CreateCapsule() {
 
     const addresses = form.beneficiaries.map((b) => b.address.trim());
     const allocations = form.beneficiaries.map((b) => Number(b.allocation));
-    // Use block.timestamp instead of Date.now() to avoid clock drift between browser and Hardhat
+    // Use block.timestamp instead of Date.now() to avoid clock drift between browser and Hardhat.
+    // Add a 60s buffer to lockSeconds so the value survives block advancement during estimateGas.
     const block = await signer.provider.getBlock('latest');
     if (!block) return;
     const blockTimestampSec = Number(block.timestamp);
     const unlockSec = Math.floor(new Date(form.unlockDatetime).getTime() / 1000);
-    const lockSeconds = Math.max(0, unlockSec - blockTimestampSec);
+    const lockSeconds = Math.max(120, unlockSec - blockTimestampSec); // 120s min to survive estimateGas
     const unlockTimestamp = BigInt(blockTimestampSec + lockSeconds);
     const value = ethers.parseEther(form.ethAmount || "0");
 
@@ -175,7 +176,8 @@ export default function CreateCapsule() {
         contract.createCapsule,
         addresses,
         allocations,
-        lockSeconds,
+        unlockTimestamp, // contract expects unlockTimestamp, not lockDurationSeconds
+        "",
         "",
         { value }
       );
@@ -217,12 +219,14 @@ export default function CreateCapsule() {
     e.preventDefault();
     if (!signer) return;
 
-    // Use block.timestamp instead of Date.now() to avoid clock drift between browser and Hardhat
+    // Use block.timestamp as reference — never Date.now() which can drift from chain time.
+    // Clamp to min 300s to survive block advancement during estimateGas (Hardhat auto-mines every 5s).
+    // This ensures frontend key derivation matches contract storage (both use block.timestamp).
     const block = await signer.provider.getBlock('latest');
     if (!block) return;
     const blockTimestampSec = Number(block.timestamp);
-    const unlockSec = Math.floor(new Date(form.unlockDatetime).getTime() / 1000);
-    const lockSeconds = Math.max(0, unlockSec - blockTimestampSec);
+    const userUnlockSec = Math.floor(new Date(form.unlockDatetime).getTime() / 1000);
+    const lockSeconds = Math.max(300, userUnlockSec - blockTimestampSec);
     const unlockTimestamp = BigInt(blockTimestampSec + lockSeconds);
 
     // Validate addresses
@@ -236,8 +240,8 @@ export default function CreateCapsule() {
       }
     }
 
-    if (lockSeconds < 60) {
-      showToast("error", "Unlock time must be at least 60 seconds (contract minimum)");
+    if (lockSeconds < 300) {
+      showToast("error", "Unlock time must be at least 5 minutes (required for network confirmation)");
       return;
     }
 
@@ -274,7 +278,7 @@ export default function CreateCapsule() {
       {
         beneficiaryAddresses: addresses,
         allocations,
-        lockDurationSeconds: lockSeconds,
+        unlockTimestamp, // pass actual Unix timestamp so contract stores the same value used for key derivation
         messageHash,
         value: form.ethAmount,
       },
@@ -536,9 +540,9 @@ export default function CreateCapsule() {
               onChange={(iso) => setForm({ ...form, unlockDatetime: iso })}
             />
             <div style={{ marginTop: "0.5rem", display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: "0.5rem" }}>
-              <span style={{ color: lockSeconds < 60 ? "#ef4444" : "var(--text-muted)", fontSize: "0.8rem" }}>
-                {lockSeconds < 60
-                  ? "Must be in the future"
+              <span style={{ color: lockSeconds < 300 ? "#ef4444" : "var(--text-muted)", fontSize: "0.8rem" }}>
+                {lockSeconds < 300
+                  ? "Must be at least 5 minutes away"
                   : `Lock duration: ${formatLockDuration(lockSeconds)}`}
               </span>
               <span style={{ color: "var(--text-muted)", fontSize: "0.8rem" }}>
@@ -628,7 +632,7 @@ export default function CreateCapsule() {
 
           <button
             type="submit"
-            disabled={loading || uploading || lockSeconds < 60 || !isAllocationValid}
+            disabled={loading || uploading || lockSeconds < 300 || !isAllocationValid}
             style={{
               background: "var(--accent)",
               color: "#fff",
@@ -637,8 +641,8 @@ export default function CreateCapsule() {
               padding: "1rem",
               fontSize: "1rem",
               fontWeight: 600,
-              cursor: loading || uploading || lockSeconds < 60 || !isAllocationValid ? "not-allowed" : "pointer",
-              opacity: loading || uploading || lockSeconds < 60 || !isAllocationValid ? 0.7 : 1,
+              cursor: loading || uploading || lockSeconds < 300 || !isAllocationValid ? "not-allowed" : "pointer",
+              opacity: loading || uploading || lockSeconds < 300 || !isAllocationValid ? 0.7 : 1,
             }}
           >
             {uploading ? "Encrypting & uploading..." : loading ? "Creating..." : "Create Capsule"}
