@@ -1,182 +1,319 @@
-# Time Capsule — Ethereum dApp
+# Time Capsule DAO — MVP
 
-A decentralized time capsule vault on Ethereum. Lock ETH and encrypted messages for one or multiple beneficiaries, with a configurable time lock. Funds and messages are only claimable after the unlock timestamp passes.
+A time-locked ETH vault that lets you lock ETH now and designate beneficiaries who can claim it after an unlock date. Built on Polygon, with off-chain messages encrypted so only the intended beneficiary can read them after the unlock time.
 
----
-
-## Project Stats
-
-| Metric | Value |
-|--------|-------|
-| Total commits | 79 |
-| Development period | 2026-04-08 to 2026-04-15 |
-| Solidity (lines) | 295 |
-| TypeScript / TSX (lines) | 7,940 |
-| CSS (lines) | 1,153 |
-| **Total source lines** | **~9,400** |
+**Not a will. Not legal advice. Not financial advice.**
 
 ---
 
-## Features
+## Table of Contents
 
-- **Time-locked vault** — ETH is locked until a user-defined unlock timestamp
-- **Multi-beneficiary** — up to 10 beneficiaries with percentage-based allocation
-- **AES-256-GCM encrypted messages** — encrypted with `keccak256(beneficiary + unlockTimestamp)`, stored on-chain
-- **Shareable claim links** — generate a `/receive/:founder/:capsuleId` link for beneficiaries
-- **Live countdown timer** — synced to chain block timestamp
-- **Transaction history** — on-chain event parsing for full audit trail
-- **Gas estimation** — pre-flight gas estimate before submitting transactions
-- **Silver liquid metal UI** — animated background with vault rings, floating capsules, clock ticks
+- [Project Overview](#project-overview)
+- [How It Works](#how-it-works)
+- [Key Features](#key-features)
+- [Architecture](#architecture)
+- [How the Time-Lock Encryption Works](#how-the-time-lock-encryption-works)
+- [Local Development Setup](#local-development-setup)
+- [Testnet Deployment](#testnet-deployment)
+- [IPFS Message Encryption](#ipfs-message-encryption)
+- [Smart Contract ABI / Addresses](#smart-contract-abi--addresses)
+- [Tech Stack](#tech-stack)
+
+---
+
+## Project Overview
+
+Time Capsule DAO is a non-custodial time-locked vault smart contract on Polygon. A founder locks ETH, sets a future unlock timestamp, designates beneficiaries with allocation percentages, and optionally attaches an encrypted message. After the unlock date, beneficiaries can claim their allocation directly — no intermediate custodian required. The encrypted message ensures the content remains private until the capsule is unlocked.
+
+---
+
+## How It Works
+
+```
+Founder
+  │
+  ├─ Creates capsule on TimeCapsuleVault
+  │   ├─ Deposits ETH (min 0.001 ETH)
+  │   ├─ Sets unlock timestamp (1 day – 10 years)
+  │   ├─ Adds beneficiaries + allocation % (must sum to 100)
+  │   └─ Optionally attaches an encrypted IPFS message
+  │
+  └─ Before unlock: founder can cancel and reclaim funds
+
+Beneficiary
+  │
+  └─ After unlock timestamp: calls claim(capsuleId) to receive allocation
+       ├─ Contract transfers ETH directly to beneficiary wallet
+       └─ Beneficiary can decrypt the IPFS message (if attached)
+```
+
+---
+
+## Key Features
+
+- **Time-locked ETH vault** — ETH is held in a smart contract until the unlock timestamp
+- **Multi-beneficiary support** — up to 10 beneficiaries per capsule with configurable allocation percentages (must sum to 100)
+- **Founder cancellation** — founder can reclaim all funds before the unlock date
+- **Shareable capsule links** — QR code / URL lets beneficiaries view and claim their capsule
+- **Time-lock encrypted messages** — AES-256-GCM encrypted messages stored on IPFS; only the beneficiary can decrypt after unlock
+- **No custody risk** — funds go directly from vault to beneficiary; no middleman
+- **Pausable by owner** — emergency stop mechanism built on OpenZeppelin Pausable
+- **Re-entrancy protection** — OpenZeppelin ReentrancyGuard on all state-changing functions
+
+---
+
+## Architecture
+
+```
+┌─────────────────────────────────────────────────────┐
+│                  React Frontend                      │
+│            (Vite + TypeScript + ethers.js v6)       │
+│                                                     │
+│  Pages: CreateCapsule | ClaimCapsule | ReceiveCapsule│
+│  Components: WalletConnect, CapsuleCard, Countdown   │
+└──────────────────────┬──────────────────────────────┘
+                       │ ethers.js v6
+                       │ (reads capsule state, sends tx)
+                       ▼
+┌─────────────────────────────────────────────────────┐
+│           TimeCapsuleVault (Solidity)               │
+│         [Polygon mainnet / Mumbai testnet]           │
+│                                                     │
+│  State: capsules[], beneficiaryIndices[][]           │
+│  Core: createCapsule(), claim(), cancelCapsule()    │
+│  Security: Ownable, ReentrancyGuard, Pausable       │
+└─────────────────────────────────────────────────────┘
+                       │
+                       │ IPFS gateway (public)
+                       ▼
+┌─────────────────────────────────────────────────────┐
+│              Off-chain IPFS Storage                  │
+│     Encrypted message blob (AES-256-GCM)            │
+│     CID stored as messageHash in Capsule struct     │
+└─────────────────────────────────────────────────────┘
+```
+
+### Smart Contracts
+
+| Contract | Purpose |
+|---|---|
+| `TimeCapsuleVault.sol` | Main vault — stores capsules, ETH, manages claims |
+| `MessageRegistry.sol` | Ownable registry for IPFS CIDs (optional) |
+
+---
+
+## How the Time-Lock Encryption Works
+
+Messages are encrypted client-side (in the browser) before being uploaded to IPFS. Decryption also happens client-side.
+
+### Algorithm: AES-256-GCM
+
+1. **Key derivation** — The symmetric key is derived as:
+   ```
+   key = keccak256(abi.encode(beneficiaryAddress, unlockTimestamp))
+   ```
+   This hash is computed using `ethers.keccak256` (matching Solidity's `keccak256`). The beneficiary address and unlock timestamp are both publicly known (on-chain), so the founder can compute the key at creation time to encrypt, and the beneficiary can compute the same key after unlock to decrypt.
+
+2. **Encryption** — A random 96-bit IV is generated per message. The plaintext is encrypted with AES-256-GCM using the derived key. The IV is prepended to the ciphertext for transport.
+
+3. **Storage** — The encrypted blob is uploaded to IPFS via a public gateway. The resulting CID is stored on-chain as `messageHash` in the `Capsule` struct.
+
+4. **Decryption** — After `block.timestamp > unlockTimestamp`, the beneficiary calls `claim()` on-chain and then fetches and decrypts the message using their wallet address and the now-public unlock timestamp.
+
+### Why this is time-lock secure
+
+- The key cannot be computed before `unlockTimestamp` because the beneficiary does not know the future timestamp in advance (the founder sets it, but it is stored on-chain and cannot be altered).
+- After unlock, the key is `keccak256(beneficiary + unlockTimestamp)`. The `unlockTimestamp` is now public and the beneficiary address is known, so the beneficiary can recompute the key and decrypt.
+
+---
+
+## Local Development Setup
+
+### Prerequisites
+
+- **Node.js 22** — Required. Use [nvm](https://github.com/nvm/nvm) to manage versions:
+  ```bash
+  nvm install 22
+  nvm use 22
+  ```
+
+### 1. Install dependencies
+
+```bash
+npm install
+```
+
+This uses npm workspaces to install both `contracts/` and `frontend/` dependencies.
+
+### 2. Start a local Hardhat node
+
+```bash
+npm run node
+```
+
+This starts a Hardhat node on `http://127.0.0.1:8545` with chain ID `31337`.
+
+### 3. Deploy the contract locally
+
+In a new terminal:
+
+```bash
+npx hardhat run scripts/deploy.ts --network localhost
+```
+
+The vault contract address will be printed (e.g. `0x5FbDB2315678afecb367f032d93F642f64180aa3`). Deployment info is also saved to `scripts/deployments.json`.
+
+### 4. Update the frontend environment
+
+Set the contract address in `frontend/.env`:
+
+```
+VITE_CONTRACT_ADDRESS=0x5FbDB2315678afecb367f032d93F642f64180aa3
+```
+
+### 5. Import a test account into MetaMask
+
+To interact with the dApp, import this Hardhat test account into MetaMask:
+
+- **Private key:** `0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80`
+- **Network:** Custom RPC → `http://127.0.0.1:8545`, chain ID `31337`
+
+This account has 10,000 ETH on the local Hardhat node.
+
+### 6. Start the frontend
+
+```bash
+npm run dev:frontend
+```
+
+The frontend runs at **http://localhost:5173**.
+
+### Run tests
+
+```bash
+npm run test
+```
+
+---
+
+## Testnet Deployment
+
+### Get test MATIC
+
+Request MATIC from the Polygon faucet:
+
+- **Mumbai:** https://mumbai.polygonscan.com/ — use the "Faucet" button on the dashboard after connecting your wallet
+- Or: https://faucet.polygon.technology/
+
+### Configure environment
+
+Copy `.env.example` to `contracts/.env` and fill in your values:
+
+```bash
+cp .env.example contracts/.env
+```
+
+Edit `contracts/.env`:
+```env
+PRIVATE_KEY=0x_your_burner_wallet_private_key
+POLYGONSCAN_API_KEY=your_polygonscan_api_key
+```
+
+Get a free Polygonscan API key at https://polygonscan.com/apis
+
+### Deploy to Mumbai testnet
+
+```bash
+npm run deploy:mumbai
+```
+
+### Deploy to Polygon mainnet
+
+```bash
+npm run deploy:polygon
+```
+
+> **Note:** Polygon Mumbai is deprecated. For production testnet deployment, use the Amoy testnet. Update `hardhat.config.ts` to add an `amoy` network entry with RPC `https://rpc-amoy.polygon.technology/` and chain ID `80002`, then add a corresponding `deploy:amoy` script.
+
+### Update frontend with deployed address
+
+After deployment, update the contract address in `frontend/.env`:
+
+```
+VITE_CONTRACT_ADDRESS=0x_your_deployed_vault_address
+```
+
+---
+
+## IPFS Message Encryption
+
+Messages are encrypted client-side using AES-256-GCM before upload. No server sees the plaintext.
+
+### Setup
+
+1. Get a free API token from https://nft.storage/manage
+2. Add it to `frontend/.env`:
+   ```
+   VITE_NFT_STORAGE_TOKEN=your_nft_storage_token
+   ```
+3. If no token is provided, the app falls back to using a public IPFS gateway for uploads (no registration required).
+
+### How messages flow
+
+1. **Create capsule** — Founder enters a message on the Create page
+2. **Encrypt** — Browser derives the AES key from `keccak256(beneficiary + unlockTimestamp)` and encrypts the message
+3. **Upload** — Encrypted blob is POSTed to `https://ipfs.io/api/v0/add` (or NFT.Storage if token is set)
+4. **Store CID** — The IPFS CID is saved on-chain in `capsule.messageHash`
+5. **Beneficiary claim** — After unlock, beneficiary fetches from IPFS and decrypts locally
+
+---
+
+## Smart Contract ABI / Addresses
+
+Deployed contract addresses are saved in `scripts/deployments.json` after each deployment. Each entry records:
+
+```json
+{
+  "network": "mumbai",
+  "vault": "0x...",
+  "timestamp": "2026-04-08T..."
+}
+```
+
+The frontend reads the vault address from `VITE_CONTRACT_ADDRESS` in `frontend/.env`.
+
+### Key contract functions
+
+| Function | Description |
+|---|---|
+| `createCapsule(beneficiaries[], allocations[], lockDurationSeconds, messageHash)` | Create a new capsule (requires 0.001 ETH min) |
+| `claim(capsuleId)` | Beneficiary claims their allocation after unlock |
+| `cancelCapsule(capsuleId)` | Founder reclaims funds before unlock |
+| `getCapsule(capsuleId)` | Returns full capsule struct |
+| `isUnlocked(capsuleId)` | Returns true if unlock timestamp has passed |
+| `getTimeRemaining(capsuleId)` | Seconds until unlock |
+| `getMyAllocation(capsuleId)` | Returns beneficiary's % allocation and claim status |
+
+### Contract constants
+
+| Constant | Value |
+|---|---|
+| `MIN_LOCK_SECONDS` | 1 day |
+| `MAX_LOCK_SECONDS` | 10 years |
+| `MIN_CREATION_FEE` | 0.001 ETH |
+| `MAX_BENEFICIARIES` | 10 |
 
 ---
 
 ## Tech Stack
 
 | Layer | Technology |
-|-------|-----------|
-| Smart contract | Solidity 0.8.x, Hardhat |
-| Frontend | React 18, TypeScript, Vite |
-| Styling | Custom CSS (no framework) |
-| Wallet | MetaMask via ethers.js v6 |
-| Encryption | AES-256-GCM (Web Crypto API) |
-| Network | Polygon Amoy testnet / Hardhat localhost |
-
----
-
-## Smart Contracts
-
-### `TimeCapsuleVault.sol`
-Core vault contract. Handles capsule creation, beneficiary allocation, time-lock enforcement, and ETH distribution.
-
-```
-Key functions:
-  createCapsule(address[], uint256[], uint256, string)  — create capsule with beneficiaries + lock duration
-  claim(uint256)                                        — claim ETH after unlock
-  cancelCapsule(uint256)                                — founder cancels before unlock
-  setMessageHash(uint256, string)                       — attach encrypted message hash
-  capsules(uint256)                                     — read capsule state
-  getUnlockTimestamp(uint256)                           — get unlock time for decryption key derivation
-```
-
-### `MessageRegistry.sol`
-Stores encrypted message hashes on-chain, associated to capsule IDs.
-
----
-
-## Getting Started
-
-### Prerequisites
-- Node.js 22+
-- MetaMask browser extension
-
-### 1. Install dependencies
-```bash
-cd "Assignment 2/tc-mvp"
-npm install
-```
-
-### 2. Start local Hardhat node
-```bash
-npm run node
-```
-
-### 3. Deploy contracts (new terminal)
-```bash
-cd contracts
-npx hardhat run scripts/deploy.ts --network localhost
-```
-
-Copy the deployed contract address into `frontend/.env`:
-```
-VITE_CONTRACT_ADDRESS=<deployed address>
-```
-
-### 4. Start frontend
-```bash
-npm run dev:frontend
-# http://localhost:5173
-```
-
-### 5. Configure MetaMask
-- Network: `Localhost 8545`
-- Chain ID: `31337`
-- Import a test account using one of the private keys printed by Hardhat
-
----
-
-## Project Structure
-
-```
-tc-mvp/
-├── contracts/
-│   ├── contracts/
-│   │   ├── TimeCapsuleVault.sol     # Core vault logic
-│   │   └── MessageRegistry.sol     # On-chain message hash storage
-│   └── scripts/
-│       └── deploy.ts               # Hardhat deploy script
-├── frontend/
-│   ├── src/
-│   │   ├── App.tsx                 # Router + background FX + navbar
-│   │   ├── pages/
-│   │   │   ├── CreateCapsule.tsx   # Create flow
-│   │   │   ├── ClaimCapsule.tsx    # Claim flow (lookup + share-link mode)
-│   │   │   ├── History.tsx         # On-chain event history
-│   │   │   └── ReceiveCapsule.tsx  # Beneficiary receive page
-│   │   ├── components/
-│   │   │   ├── CapsuleCard.tsx     # Capsule info display
-│   │   │   ├── CountdownTimer.tsx  # Chain-synced countdown
-│   │   │   ├── DateTimePicker.tsx  # Unlock time selector
-│   │   │   └── DurationSelector.tsx
-│   │   ├── hooks/
-│   │   │   └── useTimeCapsule.ts   # Contract interaction hook
-│   │   └── lib/
-│   │       ├── contracts.ts        # ethers.js contract bindings
-│   │       └── ipfs.ts             # AES-256 encrypt/decrypt
-│   └── index.css                   # Design system + animations
-├── test/
-│   └── TimeCapsuleVault.test.ts    # 38 unit tests
-└── scripts/
-    └── e2e-test.ts                 # End-to-end test script
-```
-
----
-
-## Testing
-
-```bash
-# Unit tests (38 tests)
-npm test
-
-# End-to-end test (requires running node + deployed contract)
-node scripts/e2e-test.ts
-```
-
----
-
-## Environment Variables
-
-**`frontend/.env`**
-```
-VITE_CONTRACT_ADDRESS=0x...   # Deployed TimeCapsuleVault address
-VITE_NFT_STORAGE_TOKEN=...    # Optional: NFT.Storage token for IPFS fallback
-```
-
-**`.env`** (root, for Hardhat scripts)
-```
-PRIVATE_KEY=0x...             # Deployer private key
-POLYGON_AMOY_RPC=...          # RPC endpoint (recommend Alchemy)
-```
-
----
-
-## Network Support
-
-| Network | Chain ID | Notes |
-|---------|----------|-------|
-| Hardhat Localhost | 31337 | Development |
-| Polygon Amoy | 80002 | Testnet |
-| Polygon Mainnet | 137 | Production |
-
----
-
-**Not a will. Not legal advice. Not financial advice.**
+|---|---|
+| Smart contracts | Solidity 0.8.20, OpenZeppelin 5.x |
+| Development framework | Hardhat |
+| Web3 library | ethers.js v6 |
+| Frontend | React 18, Vite 5, TypeScript |
+| IPFS | Public gateway (ipfs.io, w3s.link) + optional NFT.Storage |
+| Encryption | Web Crypto API (AES-256-GCM) |
+| Contract verification | @nomicfoundation/hardhat-verify |
+| Contract types | TypeChain |

@@ -4,6 +4,7 @@ interface DurationSelectorProps {
   value: number | null;
   onChange: (seconds: number) => void;
   minDuration?: number;
+  maxDuration?: number;
 }
 
 const DURATIONS = [
@@ -15,6 +16,7 @@ const DURATIONS = [
   { label: "7d", seconds: 604800 },
   { label: "30d", seconds: 2592000 },
   { label: "1y", seconds: 31536000 },
+  { label: "10y", seconds: 315360000 },
 ];
 
 function formatDuration(seconds: number): string {
@@ -35,25 +37,31 @@ function formatDuration(seconds: number): string {
     const months = seconds / 2592000;
     return months === 1 ? "1 month" : `${months} months`;
   }
-  const years = seconds / 31536000;
-  return years === 1 ? "1 year" : `${years} years`;
+  if (seconds < 315360000) {
+    const years = seconds / 31536000;
+    return years === 1 ? "1 year" : `${years} years`;
+  }
+  const decades = seconds / 315360000;
+  return decades === 1 ? "1 decade" : `${decades} decades`;
 }
 
 export const DurationSelector: React.FC<DurationSelectorProps> = ({
   value,
   onChange,
   minDuration = 60,
+  maxDuration,
 }) => {
   return (
     <div>
       <div className="duration-grid">
         {DURATIONS.map(({ label, seconds }) => {
           const isSelected = value === seconds;
-          const isDisabled = seconds < minDuration;
+          const isDisabled = seconds < minDuration || (maxDuration != null && seconds > maxDuration);
 
           return (
             <button
               key={label}
+              type="button"
               className={`duration-btn ${isSelected ? "duration-btn-selected" : ""}`}
               onClick={() => !isDisabled && onChange(seconds)}
               disabled={isDisabled}

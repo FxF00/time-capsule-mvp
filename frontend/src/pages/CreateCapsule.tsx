@@ -16,6 +16,7 @@ import { useNetwork, getNetworkInfo } from "../contexts/NetworkContext";
 
 const MIN_FEE_ETH = "0.001";
 const MAX_BENEFICIARIES = 10;
+const MAX_LOCK_SECONDS = 10 * 365 * 24 * 60 * 60; // 10 years — matches contract
 
 interface BeneficiaryRow {
   address: string;
@@ -297,25 +298,24 @@ export default function CreateCapsule() {
               onClick={() => {
                 const url = `${window.location.origin}/receive/${createdCapsule.founder}/${createdCapsule.id}`;
                 navigator.clipboard.writeText(url);
+                showToast("success", "Link copied to clipboard!");
               }}
             >
               Copy Link
             </button>
           </div>
 
-          {/* Create another */}
-          <div className="mt-3">
-            <p className="text-muted text-sm mb-1">Create another capsule:</p>
-            <DurationSelector
-              value={form.duration}
-              onChange={(seconds) => setForm({ ...form, duration: seconds })}
-              minDuration={60}
-            />
-          </div>
-
           <button
             className="btn btn-primary mt-2"
-            onClick={() => setCreatedCapsule(null)}
+            onClick={() => {
+              setCreatedCapsule(null);
+              setForm({
+                beneficiaries: [{ address: "", allocation: "100" }],
+                duration: null,
+                ethAmount: "0.01",
+                message: "",
+              });
+            }}
           >
             Create Another
           </button>
@@ -409,6 +409,7 @@ export default function CreateCapsule() {
               value={form.duration}
               onChange={(seconds) => setForm({ ...form, duration: seconds })}
               minDuration={60}
+              maxDuration={MAX_LOCK_SECONDS}
             />
             {form.duration !== null && (
               <p className="duration-hint">Lock duration: {formatLockDuration(form.duration)}</p>

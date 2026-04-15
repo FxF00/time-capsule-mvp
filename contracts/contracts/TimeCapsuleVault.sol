@@ -10,6 +10,11 @@ import "@openzeppelin/contracts/utils/Pausable.sol";
  * @notice Single factory contract — all capsules stored in arrays, identified by uint256 id.
  *         Beneficiaries call claim(capsuleId) on this contract after unlock time.
  *         NOT a will. NOT legal advice. NOT financial advice.
+ *
+ * Approach A — eliminates time drift by storing createdAt + lockDuration on-chain.
+ * The unlock condition is: block.timestamp >= createdAt + lockDuration
+ * The frontend derives the encryption key from getUnlockTimestamp(capsuleId)
+ * which is always createdAt + lockDuration (never drifts from the stored contract state).
  */
 contract TimeCapsuleVault is Ownable, ReentrancyGuard, Pausable {
 
@@ -29,11 +34,15 @@ contract TimeCapsuleVault is Ownable, ReentrancyGuard, Pausable {
 
     struct Capsule {
         address founder;
-        uint256 unlockTimestamp;
-        bool isWithdrawn; // true if founder cancelled or all claimed
-        string messageHash; // IPFS CID, can be empty
+        uint256 unlockTimestamp;     // == createdAt + lockDuration (kept for backward compat)
+        bool isWithdrawn;            // true if founder cancelled or all claimed
+        string messageHash;          // encrypted message payload, can be empty
         Beneficiary[] beneficiaries;
-        uint256 depositedValue; // ETH contributed by founder
+        uint256 depositedValue;      // ETH contributed by founder
+        uint256 createdAt;           // block.timestamp at creation
+        uint256 lockDuration;        // user-selected duration in seconds
+        uint256 originalUnlockTime;  // user's originally intended unlock time (for display)
+        address primaryBeneficiary; // first beneficiary — the only one who can decrypt the message
     }
 
     // ============ State ============
@@ -47,9 +56,11 @@ contract TimeCapsuleVault is Ownable, ReentrancyGuard, Pausable {
     event CapsuleCreated(
         uint256 indexed capsuleId,
         address indexed founder,
-        uint256 unlockTimestamp,
-        uint256 value,
-        string messageHash
+        uint256 createdAt,
+        uint256 lockDuration,
+        uint256 originalUnlockTime,
+        string messageHash,
+        address indexed primaryBeneficiary
     );
     event BeneficiaryAdded(uint256 indexed capsuleId, address indexed beneficiary, uint256 allocation);
     event WithdrawalClaimed(uint256 indexed capsuleId, address indexed beneficiary, uint256 amount);
@@ -75,21 +86,21 @@ contract TimeCapsuleVault is Ownable, ReentrancyGuard, Pausable {
     /// @notice Create a new time capsule vault
     /// @param beneficiaryAddresses Array of beneficiary addresses
     /// @param allocations Array of allocation percentages (must sum to 100)
-    /// @param unlockTimestamp The exact Unix timestamp when the capsule unlocks (used for key derivation — must be in the future)
+    /// @param lockDuration Duration in seconds from now until the capsule unlocks
     /// @param messageHash IPFS CID of the optional message (empty string = no message)
     /// @return capsuleId The ID of the newly created capsule
     function createCapsule(
         address[] calldata beneficiaryAddresses,
         uint256[] calldata allocations,
-        uint256 unlockTimestamp,
+        uint256 lockDuration,
         string calldata messageHash
     ) external payable whenNotPaused returns (uint256 capsuleId) {
         // Validate
         if (beneficiaryAddresses.length == 0) revert ZeroAddress();
         if (beneficiaryAddresses.length > MAX_BENEFICIARIES) revert TooManyBeneficiaries();
         if (beneficiaryAddresses.length != allocations.length) revert MismatchLength();
-        if (unlockTimestamp < block.timestamp + MIN_LOCK_SECONDS) revert LockTooShort();
-        if (unlockTimestamp > block.timestamp + MAX_LOCK_SECONDS) revert LockTooLong();
+        if (lockDuration < MIN_LOCK_SECONDS) revert LockTooShort();
+        if (lockDuration > MAX_LOCK_SECONDS) revert LockTooLong();
         if (msg.value < MIN_CREATION_FEE) revert InsufficientFee();
 
         uint256 totalAlloc = 0;
@@ -98,14 +109,22 @@ contract TimeCapsuleVault is Ownable, ReentrancyGuard, Pausable {
         }
         if (totalAlloc != 100) revert AllocationMustSumTo100();
 
+        // Compute timestamps on-chain — eliminates time drift
+        uint256 createdAt = block.timestamp;
+        uint256 originalUnlockTime = createdAt + lockDuration;
+
         // Create capsule
         capsuleId = capsules.length;
         Capsule storage c = capsules.push();
         c.founder = msg.sender;
-        c.unlockTimestamp = unlockTimestamp;
+        c.unlockTimestamp = originalUnlockTime; // backward compat: same as createdAt + lockDuration
         c.isWithdrawn = false;
         c.messageHash = messageHash;
         c.depositedValue = msg.value;
+        c.createdAt = createdAt;
+        c.lockDuration = lockDuration;
+        c.originalUnlockTime = originalUnlockTime;
+        c.primaryBeneficiary = beneficiaryAddresses[0];
 
         // Add beneficiaries
         for (uint256 i = 0; i < beneficiaryAddresses.length; i++) {
@@ -120,14 +139,14 @@ contract TimeCapsuleVault is Ownable, ReentrancyGuard, Pausable {
             emit BeneficiaryAdded(capsuleId, beneficiaryAddresses[i], allocations[i]);
         }
 
-        emit CapsuleCreated(capsuleId, msg.sender, c.unlockTimestamp, msg.value, messageHash);
+        emit CapsuleCreated(capsuleId, msg.sender, createdAt, lockDuration, originalUnlockTime, messageHash, beneficiaryAddresses[0]);
     }
 
     /// @notice Beneficiary claims their unlocked allocation
     /// @param capsuleId The ID of the capsule
     function claim(uint256 capsuleId) external nonReentrant whenNotPaused {
         Capsule storage c = capsules[capsuleId];
-        if (block.timestamp < c.unlockTimestamp) revert TimeLockActive();
+        if (block.timestamp < c.createdAt + c.lockDuration) revert TimeLockActive();
         if (c.isWithdrawn) revert AlreadyWithdrawn();
         if (!isBeneficiary[capsuleId][msg.sender]) revert NotBeneficiary();
 
@@ -154,7 +173,7 @@ contract TimeCapsuleVault is Ownable, ReentrancyGuard, Pausable {
     function cancelCapsule(uint256 capsuleId) external nonReentrant whenNotPaused {
         Capsule storage c = capsules[capsuleId];
         if (c.founder != msg.sender) revert Unauthorized();
-        if (block.timestamp >= c.unlockTimestamp) revert TimeLockActive();
+        if (block.timestamp >= c.createdAt + c.lockDuration) revert TimeLockActive();
         if (c.isWithdrawn) revert AlreadyWithdrawn();
 
         c.isWithdrawn = true;
@@ -162,6 +181,16 @@ contract TimeCapsuleVault is Ownable, ReentrancyGuard, Pausable {
         emit CapsuleCancelled(capsuleId, msg.sender);
         (bool sent, ) = payable(msg.sender).call{value: amount}("");
         require(sent, "Transfer failed");
+    }
+
+    /// @notice Sets or updates the encrypted message hash after capsule creation.
+    /// @dev Allows the founder to post the encrypted message using the authoritative on-chain
+    ///      unlock timestamp (computed after mining via getUnlockTimestamp) rather than an estimate.
+    ///      This eliminates timestamp-drift as a cause of AES-GCM decryption failures.
+    function setMessageHash(uint256 capsuleId, string calldata messageHash) external {
+        Capsule storage c = capsules[capsuleId];
+        if (c.founder != msg.sender) revert Unauthorized();
+        c.messageHash = messageHash;
     }
 
     // ============ View Functions ============
@@ -182,13 +211,23 @@ contract TimeCapsuleVault is Ownable, ReentrancyGuard, Pausable {
 
     /// @notice Check if a capsule is unlocked
     function isUnlocked(uint256 capsuleId) external view returns (bool) {
-        return capsules[capsuleId].unlockTimestamp <= block.timestamp;
+        Capsule storage c = capsules[capsuleId];
+        return block.timestamp >= c.createdAt + c.lockDuration;
+    }
+
+    /// @notice Get the current authoritative unlock timestamp (createdAt + lockDuration)
+    /// @dev Use this for key derivation — it never drifts from the on-chain state
+    function getUnlockTimestamp(uint256 capsuleId) external view returns (uint256) {
+        Capsule storage c = capsules[capsuleId];
+        return c.createdAt + c.lockDuration;
     }
 
     /// @notice Get time remaining until unlock
     function getTimeRemaining(uint256 capsuleId) external view returns (uint256) {
-        if (block.timestamp >= capsules[capsuleId].unlockTimestamp) return 0;
-        return capsules[capsuleId].unlockTimestamp - block.timestamp;
+        Capsule storage c = capsules[capsuleId];
+        uint256 unlockTime = c.createdAt + c.lockDuration;
+        if (block.timestamp >= unlockTime) return 0;
+        return unlockTime - block.timestamp;
     }
 
     // ============ Admin Functions ============

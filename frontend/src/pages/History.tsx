@@ -123,7 +123,7 @@ export default function History() {
   const [walletFilter, setWalletFilter] = useState("");
   const [walletFilterInput, setWalletFilterInput] = useState("");
 
-  const PAGE_SIZE = 50;
+  const PAGE_SIZE = 200;
 
   const fetchEvents = useCallback(
     async (fromBlock: number, toBlock: number, append = false) => {
@@ -147,8 +147,9 @@ export default function History() {
           if (eventName === "CapsuleCreated") {
             type = "created";
             founder = eventLog.topics[2] ? ethers.getAddress("0x" + eventLog.topics[2].slice(-40)) : "";
-            if (args[4] != null) {
-              const unlockBn = typeof args[4] === "bigint" ? args[4] : BigInt(args[4].toString());
+            // args[0]=createdAt, args[1]=lockDuration, args[2]=originalUnlockTime (non-indexed)
+            if (args[2] != null) {
+              const unlockBn = typeof args[2] === "bigint" ? args[2] : BigInt(args[2].toString());
               unlockTimestamp = new Date(Number(unlockBn) * 1000);
             }
             amount = "";
@@ -207,7 +208,7 @@ export default function History() {
         setChainId(Number(network.chainId));
         setProvider(browserProvider);
         const latestBlock = await browserProvider.getBlockNumber();
-        const fromBlock = Math.max(0, latestBlock - PAGE_SIZE);
+        const fromBlock = 0; // query from genesis — local Hardhat has no blocks before deploy
         await fetchEvents(fromBlock, latestBlock);
         setLoading(false);
       } catch (err: any) {
@@ -268,7 +269,7 @@ export default function History() {
 
       {/* Filter tabs + wallet filter */}
       <div
-        className="flex gap-1 mb-2"
+        className="flex gap-1 mb-2 filter-tabs"
         style={{
           borderBottom: "1px solid var(--border)",
           paddingBottom: "0.5rem",
@@ -290,10 +291,10 @@ export default function History() {
         <div style={{ flex: 1 }} />
 
         {/* Wallet filter */}
-        <div className="flex gap-1 items-center">
+        <div className="flex gap-1 items-center wallet-filter-wrapper">
           <input
             type="text"
-            className="input"
+            className="input wallet-filter-input"
             value={walletFilterInput}
             onChange={(e) => setWalletFilterInput(e.target.value)}
             onKeyDown={(e) => {
@@ -332,6 +333,7 @@ export default function History() {
 
       {/* Header row */}
       <div
+        className="events-header-row"
         style={{
           display: "grid",
           gridTemplateColumns: "90px 1fr 1fr 80px 110px",
@@ -352,39 +354,41 @@ export default function History() {
       </div>
 
       {/* Events list */}
-      {loading ? (
-        <>
-          <SkeletonRow /><SkeletonRow /><SkeletonRow /><SkeletonRow /><SkeletonRow />
-        </>
-      ) : error ? (
-        <div className="card text-center" style={{ padding: "2rem" }}>
-          <p className="text-danger">{error}</p>
-        </div>
-      ) : filteredEvents.length === 0 ? (
-        <div className="card text-center" style={{ padding: "3rem 2rem" }}>
-          <p>No events found.</p>
-          <p className="text-muted text-sm mt-1">
-            Events will appear here once capsules are created on the blockchain.
-          </p>
-        </div>
-      ) : (
-        <>
-          {filteredEvents.map((event, idx) => (
-            <EventRow key={`${event.txHash}-${event.blockNumber}-${idx}`} event={event} chainId={chainId} />
-          ))}
-          {hasMore && (
-            <div style={{ padding: "1.5rem", textAlign: "center" }}>
-              <button
-                className="btn btn-ghost"
-                onClick={loadMore}
-                disabled={loadingMore}
-              >
-                {loadingMore ? "Loading..." : "Load More"}
-              </button>
-            </div>
-          )}
-        </>
-      )}
+      <div className="events-table-wrapper">
+        {loading ? (
+          <>
+            <SkeletonRow /><SkeletonRow /><SkeletonRow /><SkeletonRow /><SkeletonRow />
+          </>
+        ) : error ? (
+          <div className="card text-center" style={{ padding: "2rem" }}>
+            <p className="text-danger">{error}</p>
+          </div>
+        ) : filteredEvents.length === 0 ? (
+          <div className="card text-center" style={{ padding: "3rem 2rem" }}>
+            <p>No events found.</p>
+            <p className="text-muted text-sm mt-1">
+              Events will appear here once capsules are created on the blockchain.
+            </p>
+          </div>
+        ) : (
+          <>
+            {filteredEvents.map((event, idx) => (
+              <EventRow key={`${event.txHash}-${event.blockNumber}-${idx}`} event={event} chainId={chainId} />
+            ))}
+            {hasMore && (
+              <div style={{ padding: "1.5rem", textAlign: "center" }}>
+                <button
+                  className="btn btn-ghost"
+                  onClick={loadMore}
+                  disabled={loadingMore}
+                >
+                  {loadingMore ? "Loading..." : "Load More"}
+                </button>
+              </div>
+            )}
+          </>
+        )}
+      </div>
     </div>
   );
 }

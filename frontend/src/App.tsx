@@ -84,57 +84,105 @@ function TimeCapsuleBrand() {
 function NavBar() {
   const location = useLocation();
   const isActive = (path: string) => location.pathname === path;
+  const [drawerOpen, setDrawerOpen] = useState(false);
+
+  const navLinks = [
+    { path: "/create", label: "Create" },
+    { path: "/claim", label: "Claim" },
+    { path: "/history", label: "History" },
+  ];
 
   return (
-    <nav className="navbar">
-      {/* Brand */}
-      <Link to="/create" className="navbar-brand">
-        <TimeCapsuleBrand />
-        <div className="navbar-brand-text">
-          <span className="navbar-brand-name">TIME CAPSULE</span>
-        </div>
-      </Link>
-
-      <div className="navbar-sep" />
-
-      {/* Nav links */}
-      <div className="navbar-links">
-        {[
-          { path: "/create", label: "Create" },
-          { path: "/claim", label: "Claim" },
-          { path: "/history", label: "History" },
-        ].map(({ path, label }, idx) => (
-          <div key={path} style={{ display: "flex", alignItems: "center" }}>
-            {idx > 0 && (
-              <div
-                style={{
-                  width: "3px",
-                  height: "3px",
-                  borderRadius: "50%",
-                  background: "var(--border)",
-                  margin: "0 0.5rem",
-                  opacity: 0.6,
-                }}
-              />
-            )}
-            <Link
-              to={path}
-              className={`navbar-link ${isActive(path) ? "navbar-link-active" : ""}`}
-            >
-              {label}
-            </Link>
+    <>
+      <nav className="navbar">
+        {/* Brand */}
+        <Link to="/create" className="navbar-brand">
+          <TimeCapsuleBrand />
+          <div className="navbar-brand-text">
+            <span className="navbar-brand-name">TIME CAPSULE</span>
           </div>
+        </Link>
+
+        <div className="navbar-sep" />
+
+        {/* Desktop Nav links */}
+        <div className="navbar-links">
+          {navLinks.map(({ path, label }, idx) => (
+            <div key={path} style={{ display: "flex", alignItems: "center" }}>
+              {idx > 0 && (
+                <div
+                  style={{
+                    width: "3px",
+                    height: "3px",
+                    borderRadius: "50%",
+                    background: "var(--border)",
+                    margin: "0 0.5rem",
+                    opacity: 0.6,
+                  }}
+                />
+              )}
+              <Link
+                to={path}
+                className={`navbar-link ${isActive(path) ? "navbar-link-active" : ""}`}
+              >
+                {label}
+              </Link>
+            </div>
+          ))}
+        </div>
+
+        <div className="navbar-spacer" />
+
+        {/* Live UTC clock */}
+        <LiveClock />
+
+        {/* Network status */}
+        <NetworkIndicator />
+
+        {/* Mobile hamburger */}
+        <button
+          className={`nav-hamburger navbar-hamburger ${drawerOpen ? "open" : ""}`}
+          onClick={() => setDrawerOpen(!drawerOpen)}
+          aria-label="Toggle navigation menu"
+        >
+          <div className="hamburger-icon">
+            <span />
+            <span />
+            <span />
+          </div>
+        </button>
+      </nav>
+
+      {/* Mobile nav overlay */}
+      <div
+        className={`nav-overlay ${drawerOpen ? "open" : ""}`}
+        onClick={() => setDrawerOpen(false)}
+      />
+
+      {/* Mobile nav drawer */}
+      <div className={`nav-drawer ${drawerOpen ? "open" : ""}`}>
+        <div className="nav-drawer-header">
+          <button className="nav-drawer-close" onClick={() => setDrawerOpen(false)}>
+            ×
+          </button>
+        </div>
+        {navLinks.map(({ path, label }) => (
+          <Link
+            key={path}
+            to={path}
+            className={`nav-drawer-link ${isActive(path) ? "active" : ""}`}
+            onClick={() => setDrawerOpen(false)}
+          >
+            {label}
+          </Link>
         ))}
+        <div style={{ marginTop: "auto", paddingTop: "1rem", borderTop: "1px solid rgba(255,255,255,0.08)" }}>
+          <div style={{ fontSize: "0.7rem", color: "rgba(255,255,255,0.35)", fontFamily: "var(--font-mono)", textAlign: "center" }}>
+            <LiveClock />
+          </div>
+        </div>
       </div>
-
-      <div className="navbar-spacer" />
-
-      {/* Live UTC clock */}
-      <LiveClock />
-
-      {/* Network status */}
-      <NetworkIndicator />
-    </nav>
+    </>
   );
 }
 
