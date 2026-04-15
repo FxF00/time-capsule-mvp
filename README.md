@@ -99,7 +99,7 @@ All capsule data (founder, beneficiaries, allocations, timestamps, encrypted mes
 │            (Vite + TypeScript + ethers.js v6)       │
 │                                                     │
 │  Pages: Create | Claim | History                          │
-│  Components: WalletConnect, CapsuleCard, Countdown   │
+│  Components: WalletConnect, CapsuleCard, CountdownTimer, Disclaimer, Toast, DurationSelector │
 └──────────────────────┬──────────────────────────────┘
                        │ ethers.js v6
                        │ (reads capsule state, sends tx)
