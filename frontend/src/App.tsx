@@ -2,9 +2,9 @@ import { createBrowserRouter, RouterProvider, Link, useLocation } from "react-ro
 import { ToastProvider } from "./components/Toast";
 import CreateCapsule from "./pages/CreateCapsule";
 import ClaimCapsule from "./pages/ClaimCapsule";
-import ReceiveCapsule from "./pages/ReceiveCapsule";
+import ReceiveRedirect from "./pages/ReceiveRedirect";
 import History from "./pages/History";
-import MyCapsules from "./pages/MyCapsules";
+// MyCapsules removed — functionality removed per user request
 import { NetworkProvider, useNetwork } from "./contexts/NetworkContext";
 
 function NetworkIndicator() {
@@ -83,17 +83,6 @@ function NavBar() {
       >
         History
       </Link>
-      <Link
-        to="/mycapsules"
-        style={{
-          color: isActive("/mycapsules") ? "var(--accent)" : "var(--text-muted)",
-          fontWeight: isActive("/mycapsules") ? 700 : 400,
-          textDecoration: "none",
-          fontSize: "1rem",
-        }}
-      >
-        My Capsules
-      </Link>
       <NetworkIndicator />
     </nav>
   );
@@ -129,7 +118,7 @@ const router = createBrowserRouter([
   },
   {
     path: "/receive/:founder/:capsuleId",
-    element: <ReceiveCapsule />,
+    element: <ReceiveRedirect />,
   },
   {
     path: "/history",
@@ -140,15 +129,7 @@ const router = createBrowserRouter([
       </div>
     ),
   },
-  {
-    path: "/mycapsules",
-    element: (
-      <div>
-        <NavBar />
-        <MyCapsules />
-      </div>
-    ),
-  },
+  // /mycapsules route removed — MyCapsules page deleted
 ]);
 
 export default function App() {
