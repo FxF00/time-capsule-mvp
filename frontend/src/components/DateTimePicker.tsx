@@ -67,8 +67,12 @@ export default function DateTimePicker({ value, onChange, minDate, minTime, chai
 
   const MIN_LOCK_MS = 300 * 1000; // 5 minutes minimum — must match contract MIN_LOCK_SECONDS
 
-  function notify() {
-    const selected = new Date(year, month, day, hour, minute, 0);
+  // notify receives values as parameters so it never reads stale closure state
+  function notify(y: number, m: number, d: number, h: number, mi: number) {
+    // Clamp minute to nearest 5-min increment BEFORE using it — keeps dropdown in sync with emitted value
+    const clampedMi = Math.ceil(mi / 5) * 5;
+    const selected = new Date(y, m, d, h, clampedMi, 0);
+
     // Use chain time as reference when available, not stale closure of browser time
     const refMsFresh = chainTimestamp != null ? Number(chainTimestamp) * 1000 : Date.now();
     let minValid = new Date(refMsFresh + MIN_LOCK_MS);
@@ -76,7 +80,7 @@ export default function DateTimePicker({ value, onChange, minDate, minTime, chai
     // Apply minTime (HH:MM) as an additional time-of-day lower bound on the selected date
     if (minTime) {
       const [minH, minM] = minTime.split(":").map(Number);
-      const minTimeOnDay = new Date(year, month, day, minH, minM, 0);
+      const minTimeOnDay = new Date(y, m, d, minH, minM, 0);
       if (minTimeOnDay.getTime() > minValid.getTime()) {
         minValid = minTimeOnDay;
       }
@@ -94,27 +98,33 @@ export default function DateTimePicker({ value, onChange, minDate, minTime, chai
       setDay(newDay);
       setHour(newHour);
       setMinute(newMinute);
-      onChange(toISOStringLocal(minValid));
+      // Emit from the fully-rounded values so the ISO string matches what was set in state
+      const clampedMinValid = new Date(newYear, newMonth, newDay, newHour, newMinute, 0);
+      onChange(toISOStringLocal(clampedMinValid));
       return;
     }
+    // Update internal state to match what we're about to emit (handles case where user types a valid time directly)
+    setYear(y);
+    setMonth(m);
+    setDay(d);
+    setHour(h);
+    setMinute(clampedMi);
     onChange(toISOStringLocal(selected));
   }
 
   function handleMonthChange(m: number) {
-    setMonth(m);
-    if (day > getDaysInMonth(year, m)) setDay(getDaysInMonth(year, m));
-    setTimeout(notify, 0);
+    const newDay = day > getDaysInMonth(year, m) ? getDaysInMonth(year, m) : day;
+    notify(year, m, newDay, hour, minute);
   }
 
   function handleYearChange(y: number) {
-    setYear(y);
-    if (day > getDaysInMonth(y, month)) setDay(getDaysInMonth(y, month));
-    setTimeout(notify, 0);
+    const newDay = day > getDaysInMonth(y, month) ? getDaysInMonth(y, month) : day;
+    notify(y, month, newDay, hour, minute);
   }
 
-  function handleDayChange(d: number) { setDay(d); setTimeout(notify, 0); }
-  function handleHourChange(h: number) { setHour(h); setTimeout(notify, 0); }
-  function handleMinuteChange(m: number) { setMinute(m); setTimeout(notify, 0); }
+  function handleDayChange(d: number) { notify(year, month, d, hour, minute); }
+  function handleHourChange(h: number) { notify(year, month, day, h, minute); }
+  function handleMinuteChange(mi: number) { notify(year, month, day, hour, mi); }
 
   return (
     <div style={{ display: "flex", gap: "0.5rem", alignItems: "center", flexWrap: "wrap" }}>

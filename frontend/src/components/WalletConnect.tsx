@@ -32,20 +32,18 @@ export default function WalletConnect({ onConnected }: WalletConnectProps) {
 
   return (
     <button
+      className="btn btn-primary"
       onClick={connect}
       disabled={loading}
-      style={{
-        background: "var(--accent)",
-        color: "#fff",
-        border: "none",
-        borderRadius: "8px",
-        padding: "0.75rem 1.5rem",
-        fontSize: "1rem",
-        cursor: loading ? "not-allowed" : "pointer",
-        opacity: loading ? 0.7 : 1,
-      }}
     >
-      {loading ? "Connecting..." : "Connect MetaMask"}
+      {loading ? (
+        <>
+          <span className="spinner" style={{ width: "16px", height: "16px", borderWidth: "2px" }} />
+          Connecting...
+        </>
+      ) : (
+        "Connect MetaMask"
+      )}
     </button>
   );
 }

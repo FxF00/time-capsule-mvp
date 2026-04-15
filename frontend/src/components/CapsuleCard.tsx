@@ -1,5 +1,6 @@
 import { ethers } from "ethers";
 import type { CapsuleView } from "../hooks/useTimeCapsule";
+import CountdownTimer from "./CountdownTimer";
 
 interface CapsuleCardProps {
   capsule?: CapsuleView;
@@ -7,54 +8,36 @@ interface CapsuleCardProps {
   loading?: boolean;
 }
 
-function formatTime(seconds: bigint): string {
-  const s = Number(seconds);
-  if (s <= 0) return "Unlocked";
-  const days = Math.floor(s / 86400);
-  const hours = Math.floor((s % 86400) / 3600);
-  const mins = Math.floor((s % 3600) / 60);
-  if (days > 0) return `${days}d ${hours}h remaining`;
-  if (hours > 0) return `${hours}h ${mins}m remaining`;
-  return `${mins}m remaining`;
-}
-
 export default function CapsuleCard({ capsule, compact = false, loading = false }: CapsuleCardProps) {
   const depositedEth = capsule ? ethers.formatEther(capsule.depositedValue) : "0";
-  const isUnlocked = capsule ? capsule.isUnlocked : false;
+  const unlocked = capsule ? Number(capsule.unlockTimestamp) * 1000 <= Date.now() : false;
 
   if (loading) {
     return (
-      <div
-        style={{
-          background: "var(--card)",
-          border: "1px solid var(--border)",
-          borderRadius: "12px",
-          padding: compact ? "1rem" : "1.5rem",
-        }}
-      >
+      <div className="card">
         <style>{`
           @keyframes skeleton-pulse {
-            0%, 100% { opacity: 0.4; }
-            50% { opacity: 0.8; }
+            0%, 100% { opacity: 0.3; }
+            50% { opacity: 0.6; }
           }
           .skeleton-line {
             animation: skeleton-pulse 1.4s ease-in-out infinite;
             background: var(--border);
-            border-radius: 4px;
+            border-radius: 2px;
           }
         `}</style>
         {compact ? (
-          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+          <div className="flex justify-between items-center">
             <div className="skeleton-line" style={{ height: "1rem", width: "5rem" }} />
             <div className="skeleton-line" style={{ height: "0.85rem", width: "4rem" }} />
           </div>
         ) : (
           <>
-            <div style={{ display: "flex", justifyContent: "space-between", marginBottom: "1rem" }}>
+            <div className="flex justify-between mb-2">
               <div className="skeleton-line" style={{ height: "1.75rem", width: "6rem" }} />
-              <div className="skeleton-line" style={{ height: "1.5rem", width: "4.5rem", borderRadius: "999px" }} />
+              <div className="skeleton-line" style={{ height: "1.5rem", width: "4.5rem", borderRadius: "2px" }} />
             </div>
-            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "0.75rem", fontSize: "0.9rem" }}>
+            <div className="grid-info">
               <div>
                 <div className="skeleton-line" style={{ height: "0.7rem", width: "3rem", marginBottom: "0.4rem" }} />
                 <div className="skeleton-line" style={{ height: "1rem", width: "5rem" }} />
@@ -80,103 +63,83 @@ export default function CapsuleCard({ capsule, compact = false, loading = false 
 
   if (compact) {
     return (
-      <div
-        style={{
-          background: "var(--card)",
-          border: "1px solid var(--border)",
-          borderRadius: "12px",
-          padding: "1rem",
-        }}
-      >
-        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-          <span style={{ fontWeight: 600 }}>{depositedEth} ETH</span>
-          <span
-            style={{
-              fontSize: "0.8rem",
-              color: isUnlocked ? "var(--success)" : "var(--accent-light)",
-            }}
-          >
-            {isUnlocked ? "Unlocked" : capsule ? formatTime(capsule.timeRemaining) : "N/A"}
+      <div className="card" style={{ padding: "1rem" }}>
+        <div className="flex justify-between items-center">
+          <span className="font-bold">{depositedEth} ETH</span>
+          <span className={`text-sm ${unlocked ? "text-success" : "text-accent"}`}>
+            {capsule ? <CountdownTimer unlockTimestamp={capsule.unlockTimestamp} /> : "N/A"}
           </span>
         </div>
       </div>
     );
   }
 
-  // Guard: capsule is required for full card view
   if (!capsule) {
     return (
-      <div
-        style={{
-          background: "var(--card)",
-          border: "1px solid var(--border)",
-          borderRadius: "12px",
-          padding: "1.5rem",
-          textAlign: "center",
-          color: "var(--text-muted)",
-        }}
-      >
+      <div className="card text-center" style={{ padding: "2rem", color: "var(--text-muted)" }}>
         No capsule data
       </div>
     );
   }
 
+  const statusBg =
+    capsule.isWithdrawn
+      ? "var(--danger-dim)"
+      : unlocked
+      ? "var(--success-dim)"
+      : "var(--accent-subtle)";
+
+  const statusColor =
+    capsule.isWithdrawn
+      ? "var(--danger)"
+      : unlocked
+      ? "var(--success)"
+      : "var(--accent)";
+
+  const statusBorder =
+    capsule.isWithdrawn
+      ? "rgba(255,77,77,0.25)"
+      : unlocked
+      ? "rgba(57,255,143,0.25)"
+      : "rgba(255,107,0,0.25)";
+
+  const statusLabel = capsule.isWithdrawn ? "Withdrawn" : unlocked ? "Claimable" : "Locked";
+
   return (
-    <div
-      style={{
-        background: "var(--card)",
-        border: "1px solid var(--border)",
-        borderRadius: "12px",
-        padding: "1.5rem",
-      }}
-    >
-      <div style={{ display: "flex", justifyContent: "space-between", marginBottom: "1rem" }}>
+    <div className="card">
+      <div className="flex justify-between items-start mb-2">
         <span style={{ fontSize: "1.5rem", fontWeight: 700 }}>{depositedEth} ETH</span>
         <span
+          className="capsule-status"
           style={{
-            background: capsule.isWithdrawn
-              ? "rgba(239, 68, 68, 0.2)"
-              : isUnlocked
-              ? "rgba(34, 197, 94, 0.2)"
-              : "rgba(124, 58, 237, 0.2)",
-            color: capsule.isWithdrawn
-              ? "#ef4444"
-              : isUnlocked
-              ? "var(--success)"
-              : "var(--accent-light)",
-            padding: "0.25rem 0.75rem",
-            borderRadius: "999px",
-            fontSize: "0.85rem",
-            fontWeight: 600,
+            background: statusBg,
+            color: statusColor,
+            border: `1px solid ${statusBorder}`,
           }}
         >
-          {capsule.isWithdrawn
-            ? "Withdrawn"
-            : isUnlocked
-            ? "Claimable"
-            : "Locked"}
+          {statusLabel}
         </span>
       </div>
 
-      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "0.75rem", fontSize: "0.9rem" }}>
+      <div className="grid-info">
         <div>
-          <span style={{ color: "var(--text-muted)" }}>Status</span>
-          <div>{isUnlocked ? "Unlocked" : formatTime(capsule.timeRemaining)}</div>
+          <div className="info-label">Status</div>
+          <CountdownTimer unlockTimestamp={capsule.unlockTimestamp} />
         </div>
         <div>
-          <span style={{ color: "var(--text-muted)" }}>Beneficiaries</span>
-          <div>{capsule.beneficiaryCount}</div>
+          <div className="info-label">Beneficiaries</div>
+          <div className="font-bold">{capsule.beneficiaryCount}</div>
         </div>
         <div style={{ gridColumn: "1 / -1" }}>
-          <span style={{ color: "var(--text-muted)" }}>Founder</span>
-          <div style={{ fontFamily: "monospace", fontSize: "0.8rem" }}>
+          <div className="info-label">Founder</div>
+          <div className="font-mono text-sm" style={{ wordBreak: "break-all" }}>
             {capsule.founder}
           </div>
         </div>
         {capsule.messageHash && (
           <div style={{ gridColumn: "1 / -1" }}>
-            <span style={{ color: "var(--text-muted)" }}>Message</span>
-            <div style={{ fontFamily: "monospace", fontSize: "0.8rem", wordBreak: "break-all" }}>
+            <div className="info-label">Message</div>
+            <div className="font-mono text-sm" style={{ wordBreak: "break-all" }}>
               {capsule.messageHash}
             </div>
           </div>

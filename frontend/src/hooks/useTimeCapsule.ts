@@ -12,12 +12,16 @@ export interface CapsuleView {
   beneficiaryCount: number;
   isUnlocked: boolean;
   timeRemaining: bigint;
+  createdAt: bigint;
+  lockDuration: bigint;
+  originalUnlockTime: bigint;
+  primaryBeneficiary: string; // address of the first beneficiary — the only one who can decrypt
 }
 
 export interface CreateCapsuleParams {
   beneficiaryAddresses: string[];
   allocations: number[];
-  unlockTimestamp: bigint; // exact Unix timestamp used for key derivation
+  lockDuration: number; // seconds — contract computes unlockTimestamp = createdAt + lockDuration
   messageHash: string;
   value: string; // ETH as string (e.g. "0.1")
 }
@@ -30,24 +34,44 @@ export function useTimeCapsule() {
     async (capsuleId: number, signer: ethers.JsonRpcSigner): Promise<CapsuleView | null> => {
       try {
         const contract = getVaultContract(signer) as ethers.Contract;
-        // Use capsules() directly — getCapsule() ABI has struct mismatch due to dynamic beneficiaries array
-        const [capsuleTuple, beneficiaryCount, isUnlocked, timeRemaining] = await Promise.all([
-          contract.capsules(capsuleId),
-          contract.getBeneficiaryCount(capsuleId),
-          contract.isUnlocked(capsuleId),
-          contract.getTimeRemaining(capsuleId),
-        ]);
+        // Use manual getCapsule() — the auto-getter capsules() corrupts string fields
+        // (returns keccak256 instead of actual string values).
+        // getCapsule(uint256) returns the full Capsule struct in memory with correct values.
+        const capsuleTuple = await contract.getCapsule(capsuleId) as any;
+        const beneficiaryCount = await contract.getBeneficiaryCount(capsuleId);
+
+        // getCapsule returns: [founder, unlockTimestamp, isWithdrawn, messageHash, beneficiaries[], depositedValue, createdAt, lockDuration, originalUnlockTime, primaryBeneficiary]
+        const founder: string = capsuleTuple[0];
+        const unlockTimestampFromContract: bigint = capsuleTuple[1];
+        const isWithdrawn: boolean = capsuleTuple[2];
+        const messageHash: string = capsuleTuple[3];
+        const beneficiaries: string[] = capsuleTuple[4]; // not used directly
+        const depositedValue: bigint = capsuleTuple[5];
+        const createdAt: bigint = capsuleTuple[6];
+        const lockDuration: bigint = capsuleTuple[7];
+        const originalUnlockTime: bigint = capsuleTuple[8];
+        const primaryBeneficiary: string = capsuleTuple[9];
+
+        // Client-side unlock computation — no network round-trip drift
+        const currentTime = BigInt(Math.floor(Date.now() / 1000));
+        const unlockTimestamp = createdAt + lockDuration;
+        const timeRemaining = unlockTimestamp > currentTime ? unlockTimestamp - currentTime : BigInt(0);
+        const isUnlocked = currentTime >= unlockTimestamp;
 
         return {
           id: capsuleId,
-          founder: capsuleTuple[0],
-          unlockTimestamp: capsuleTuple[1],
-          isWithdrawn: capsuleTuple[2],
-          messageHash: capsuleTuple[3],
-          depositedValue: capsuleTuple[4],
+          founder,
+          unlockTimestamp: unlockTimestampFromContract,
+          isWithdrawn,
+          messageHash,
+          depositedValue,
+          createdAt,
+          lockDuration,
+          originalUnlockTime,
           beneficiaryCount: Number(beneficiaryCount),
           isUnlocked,
           timeRemaining,
+          primaryBeneficiary,
         };
       } catch (err: any) {
         setError(err.message || "Failed to fetch capsule");
@@ -81,17 +105,38 @@ export function useTimeCapsule() {
         const tx = await contract.createCapsule(
           params.beneficiaryAddresses,
           params.allocations,
-          params.unlockTimestamp,
+          params.lockDuration,
           params.messageHash,
           { value }
         );
         const receipt = await tx.wait();
 
-        // Find CapsuleCreated event — indexed uint256 capsuleId is in topics[1]
-        const capsuleEvent = receipt.logs.find(
+        // Try fragment-based lookup first (ethers v6 auto-decode path)
+        let capsuleEvent = receipt.logs.find(
           (l: any) => l.fragment?.name === "CapsuleCreated"
         );
+
+        // Fallback: manually decode using vault interface
         if (!capsuleEvent) {
+          const vaultInterface = contract.interface;
+          for (const log of receipt.logs) {
+            try {
+              const parsed = vaultInterface.parseLog({ topics: log.topics, data: log.data });
+              if (parsed?.name === "CapsuleCreated") {
+                capsuleEvent = { ...log, fragment: parsed.fragment, args: parsed.args };
+                break;
+              }
+            } catch {
+              // not this log — keep scanning
+            }
+          }
+        }
+
+        if (!capsuleEvent) {
+          console.error("[createCapsule] CapsuleCreated event not found. All logs:");
+          receipt.logs.forEach((l: any, i: number) => {
+            console.error(`  log[${i}]: address=${l.address} topics=${JSON.stringify(l.topics)} data=${l.data}`);
+          });
           setError("CapsuleCreated event not found");
           return null;
         }
@@ -153,6 +198,25 @@ export function useTimeCapsule() {
     []
   );
 
+  const setMessageHash = useCallback(
+    async (capsuleId: number, messageHash: string, signer: ethers.JsonRpcSigner): Promise<boolean> => {
+      setLoading(true);
+      setError(null);
+      try {
+        const contract = getVaultContract(signer) as ethers.Contract;
+        const tx = await contract.setMessageHash(capsuleId, messageHash);
+        await tx.wait();
+        return true;
+      } catch (err: any) {
+        setError(err.message || "Failed to set message hash");
+        return false;
+      } finally {
+        setLoading(false);
+      }
+    },
+    []
+  );
+
   return {
     loading,
     error,
@@ -162,6 +226,7 @@ export function useTimeCapsule() {
     createCapsule,
     claimCapsule,
     cancelCapsule,
+    setMessageHash,
     contractAddress: CONTRACT_ADDRESS,
   };
 }

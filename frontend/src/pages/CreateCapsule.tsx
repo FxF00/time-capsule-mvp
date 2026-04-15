@@ -6,7 +6,7 @@ import { useTimeCapsule } from "../hooks/useTimeCapsule";
 import WalletConnect from "../components/WalletConnect";
 import Disclaimer from "../components/Disclaimer";
 import CapsuleCard from "../components/CapsuleCard";
-import DateTimePicker from "../components/DateTimePicker";
+import DurationSelector from "../components/DurationSelector";
 import { useToast } from "../components/Toast";
 import { parseContractError } from "../lib/errors";
 import type { CapsuleView } from "../hooks/useTimeCapsule";
@@ -24,20 +24,13 @@ interface BeneficiaryRow {
 
 interface FormState {
   beneficiaries: BeneficiaryRow[];
-  unlockDatetime: string; // ISO datetime string
+  duration: number | null;
   ethAmount: string;
   message: string;
 }
 
-function computeLockSeconds(unlockDatetime: string): number {
-  const unlock = new Date(unlockDatetime).getTime();
-  const now = Date.now();
-  return Math.max(0, Math.floor((unlock - now) / 1000));
-}
-
-function computeLockSecondsFromChain(unlockDatetime: string, blockTimestampSec: number): number {
-  const unlock = Math.floor(new Date(unlockDatetime).getTime() / 1000);
-  return Math.max(0, unlock - blockTimestampSec);
+function computeTotalAllocation(beneficiaries: BeneficiaryRow[]): number {
+  return beneficiaries.reduce((sum, b) => sum + (Number(b.allocation) || 0), 0);
 }
 
 function formatLockDuration(seconds: number): string {
@@ -47,41 +40,16 @@ function formatLockDuration(seconds: number): string {
   return `${Math.floor(seconds / 86400)}d`;
 }
 
-function computeTotalAllocation(beneficiaries: BeneficiaryRow[]): number {
-  return beneficiaries.reduce((sum, b) => sum + (Number(b.allocation) || 0), 0);
-}
-
 export default function CreateCapsule() {
   const [signer, setSigner] = useState<ethers.JsonRpcSigner | null>(null);
   const [walletAddress, setWalletAddress] = useState<string | null>(null);
   const { setNetwork, setProvider } = useNetwork();
   const [gasEstimate, setGasEstimate] = useState<GasEstimateResult | null>(null);
   const { showToast } = useToast();
-  const [currentTimestamp, setCurrentTimestamp] = useState<bigint | null>(null);
-
-  // Default unlock: now + 60 seconds (timezone-aware ISO string)
-  const defaultUnlock = new Date(Date.now() + 60000);
-  function pad(n: number, len = 2): string {
-    return String(n).padStart(len, "0");
-  }
-  function localISO(d: Date): string {
-    const offset = -d.getTimezoneOffset();
-    const sign = offset >= 0 ? "+" : "-";
-    const absOffset = Math.abs(offset);
-    return (
-      d.getFullYear() + "-" +
-      pad(d.getMonth() + 1) + "-" +
-      pad(d.getDate()) + "T" +
-      pad(d.getHours()) + ":" +
-      pad(d.getMinutes()) +
-      `${sign}${pad(Math.floor(absOffset / 60))}:${pad(absOffset % 60)}`
-    );
-  }
-  const defaultISO = localISO(defaultUnlock);
 
   const [form, setForm] = useState<FormState>({
     beneficiaries: [{ address: "", allocation: "100" }],
-    unlockDatetime: defaultISO,
+    duration: null,
     ethAmount: "0.01",
     message: "",
   });
@@ -91,7 +59,7 @@ export default function CreateCapsule() {
   const [uploading, setUploading] = useState(false);
   const qrCanvasRef = useRef<HTMLCanvasElement>(null);
 
-  const { loading, error, createCapsule, getCapsule } = useTimeCapsule();
+  const { loading, error, createCapsule, getCapsule, setMessageHash } = useTimeCapsule();
 
   const totalAllocation = computeTotalAllocation(form.beneficiaries);
   const isAllocationValid = totalAllocation === 100;
@@ -104,17 +72,13 @@ export default function CreateCapsule() {
     qrcode(qrCanvasRef.current, url, {
       width: 200,
       margin: 2,
-      color: {
-        dark: "#e2e8f0",
-        light: "#1e293b",
-      },
+      color: { dark: "#e8dcc8", light: "#0c0c16" },
     });
   }, [createdCapsule]);
 
   async function handleConnected(signer: ethers.JsonRpcSigner, address: string) {
     setSigner(signer);
     setWalletAddress(address);
-    // Detect and set network
     const provider = signer.provider as ethers.BrowserProvider;
     if (provider) {
       setProvider(provider);
@@ -127,55 +91,26 @@ export default function CreateCapsule() {
     }
   }
 
-  // Keep chain timestamp in sync — empty deps so interval runs independently of signer state
-  useEffect(() => {
-    async function fetchBlockTimestamp() {
-      try {
-        const ethereum = window.ethereum as ethers.Eip1193Provider | undefined;
-        if (!ethereum) return;
-        const provider = new ethers.BrowserProvider(ethereum);
-        const block = await provider.getBlock('latest');
-        if (block) setCurrentTimestamp(BigInt(Number(block.timestamp)));
-      } catch { /* ignore — CountdownTimer falls back to Date.now() */ }
-    }
-    fetchBlockTimestamp();
-    const interval = setInterval(fetchBlockTimestamp, 12000);
-    return () => clearInterval(interval);
-  }, []);
-
   async function updateGasEstimate() {
     if (!signer || !walletAddress) {
       setGasEstimate(null);
       return;
     }
-
     const addresses = form.beneficiaries.map((b) => b.address.trim());
     const allocations = form.beneficiaries.map((b) => Number(b.allocation));
     const value = ethers.parseEther(form.ethAmount || "0");
-
-    // Use block.timestamp as reference — never Date.now() which can drift from chain time.
-    // Add 300s buffer so unlockTimestamp survives block advancement during estimateGas
-    // (Hardhat auto-mines every 5s; without buffer the contract validation fails).
-    const block = await signer.provider.getBlock('latest');
-    if (!block) return;
-    const blockTimestampSec = Number(block.timestamp);
-    const userUnlockSec = Math.floor(new Date(form.unlockDatetime).getTime() / 1000);
-    const unlockTimestamp = BigInt(Math.max(userUnlockSec, blockTimestampSec + 300));
-
-    // Validate — must match contract's MIN_LOCK_SECONDS (60s) but we use 300s to be safe
+    const lockDuration = form.duration;
     const isValidAddresses = addresses.every((addr) => ethers.isAddress(addr));
-    if (!isValidAddresses || userUnlockSec < blockTimestampSec + 300 || totalAllocation !== 100) {
+    if (!isValidAddresses || lockDuration === null || lockDuration < 60 || totalAllocation !== 100) {
       setGasEstimate(null);
       return;
     }
-
     try {
       const contract = getVaultContract(signer) as ethers.Contract;
-      // ABI: createCapsule(address[] calldata, uint256[] calldata, uint256 unlockTimestamp, string calldata)
       const result = await estimateGas(
         signer,
         contract.createCapsule,
-        [addresses, allocations, unlockTimestamp, ""],
+        [addresses, allocations, lockDuration, ""],
         { value }
       );
       setGasEstimate(result);
@@ -184,20 +119,14 @@ export default function CreateCapsule() {
     }
   }
 
-  // Estimate gas when form changes
   useEffect(() => {
-    const timeout = setTimeout(() => {
-      updateGasEstimate();
-    }, 500);
+    const timeout = setTimeout(() => updateGasEstimate(), 500);
     return () => clearTimeout(timeout);
   }, [form, signer, walletAddress, totalAllocation]);
 
   function addBeneficiary() {
     if (!canAddBeneficiary) return;
-    setForm({
-      ...form,
-      beneficiaries: [...form.beneficiaries, { address: "", allocation: "" }],
-    });
+    setForm({ ...form, beneficiaries: [...form.beneficiaries, { address: "", allocation: "" }] });
   }
 
   function removeBeneficiary(index: number) {
@@ -215,18 +144,7 @@ export default function CreateCapsule() {
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
     if (!signer) return;
-
-    // Use block.timestamp as reference — never Date.now() which can drift from chain time.
-    // Clamp to min 300s to survive block advancement during estimateGas (Hardhat auto-mines every 5s).
-    // This ensures frontend key derivation matches contract storage (both use block.timestamp).
-    const block = await signer.provider.getBlock('latest');
-    if (!block) return;
-    const blockTimestampSec = Number(block.timestamp);
-    const userUnlockSec = Math.floor(new Date(form.unlockDatetime).getTime() / 1000);
-    const unlockTimestamp = BigInt(Math.max(userUnlockSec, blockTimestampSec + 300));
-    const lockSeconds = Number(unlockTimestamp) - blockTimestampSec;
-
-    // Validate addresses
+    const lockDuration = form.duration;
     const addresses = form.beneficiaries.map((b) => b.address.trim());
     const allocations = form.beneficiaries.map((b) => Number(b.allocation));
 
@@ -236,82 +154,72 @@ export default function CreateCapsule() {
         return;
       }
     }
-
-    if (lockSeconds < 300) {
-      showToast("error", "Unlock time must be at least 5 minutes (required for network confirmation)");
+    if (lockDuration === null) {
+      showToast("error", "Please select a lock duration");
       return;
     }
-
+    if (lockDuration < 60) {
+      showToast("error", "Lock duration must be at least 60 seconds");
+      return;
+    }
     if (!isAllocationValid) {
       showToast("error", `Total allocation must equal 100% (currently ${totalAllocation}%)`);
       return;
     }
 
-    // For message encryption, use the first beneficiary's address
+    const capsuleIdStr = await createCapsule(
+      { beneficiaryAddresses: addresses, allocations, lockDuration, messageHash: "", value: form.ethAmount },
+      signer
+    );
+    if (capsuleIdStr === null) return;
+
+    const capsule = await getCapsule(Number(capsuleIdStr), signer);
+    if (!capsule) {
+      showToast("error", "Capsule created but failed to retrieve it");
+      return;
+    }
     const primaryBeneficiary = addresses[0];
 
-    let messageHash = "";
-
-    // Encrypt and upload message if provided
+    let finalMessageHash = "";
     if (form.message.trim()) {
       setUploading(true);
       try {
-        const result = await uploadEncryptedMessage(
-          primaryBeneficiary,
-          unlockTimestamp,
-          form.message
-        );
-        // Store both IPFS CID and encrypted content
-        // Priority: IPFS CID (if available) → base64 encrypted content
-        messageHash = result.cid || result.encryptedContent;
+        const authoritativeUnlockTimestamp = capsule.createdAt + capsule.lockDuration;
+        const result = await uploadEncryptedMessage(primaryBeneficiary, authoritativeUnlockTimestamp, form.message);
+        finalMessageHash = result.cid || result.encryptedContent;
+        const hashSet = await setMessageHash(Number(capsuleIdStr), finalMessageHash, signer);
+        if (!hashSet) {
+          showToast("error", "Message encrypted but failed to store on-chain");
+          finalMessageHash = "";
+        }
       } catch (err: any) {
         console.warn("Message upload failed:", err.message);
-        messageHash = "";
+        finalMessageHash = "";
+        showToast("error", "Message encryption failed — the capsule will be created without a message.");
       }
       setUploading(false);
     }
 
-    const capsuleIdStr = await createCapsule(
-      {
-        beneficiaryAddresses: addresses,
-        allocations,
-        unlockTimestamp, // pass actual Unix timestamp so contract stores the same value used for key derivation
-        messageHash,
-        value: form.ethAmount,
-      },
-      signer
-    );
-
-    if (capsuleIdStr !== null) {
-      const capsule = await getCapsule(Number(capsuleIdStr), signer);
-      if (capsule) {
-        setCreatedCapsule(capsule);
-        setTxHash(`Capsule #${capsuleIdStr} created!`);
-        showToast('success', 'Transaction submitted!');
-        // Store beneficiary info for founder to view later
-        try {
-          const capsuleData = {
-            id: capsule.id,
-            founder: capsule.founder,
-            beneficiaries: form.beneficiaries.map((b, i) => ({
-              address: addresses[i],
-              allocation: allocations[i],
-            })),
-          };
-          sessionStorage.setItem(`capsule_beneficiaries_${walletAddress}_${capsule.id}`, JSON.stringify(capsuleData));
-          // Store primary beneficiary address so ClaimCapsule can gate decrypt access correctly.
-          // The message is encrypted with addresses[0] + unlockTimestamp — only that address can decrypt.
-          sessionStorage.setItem(`capsule_${capsule.founder}_${capsule.id}_primary_beneficiary`, addresses[0]);
-        } catch (err) {
-          // sessionStorage may be unavailable
-        }
-      }
+    const updatedCapsule = await getCapsule(Number(capsuleIdStr), signer);
+    if (updatedCapsule) {
+      setCreatedCapsule(updatedCapsule);
+      setTxHash(`Capsule #${capsuleIdStr} created!`);
+      showToast("success", "Transaction submitted!");
+      try {
+        const capsuleData = {
+          id: updatedCapsule.id,
+          founder: updatedCapsule.founder,
+          beneficiaries: form.beneficiaries.map((b, i) => ({ address: addresses[i], allocation: allocations[i] })),
+        };
+        sessionStorage.setItem(`capsule_beneficiaries_${walletAddress}_${updatedCapsule.id}`, JSON.stringify(capsuleData));
+        sessionStorage.setItem(`capsule_${updatedCapsule.founder}_${updatedCapsule.id}_primary_beneficiary`, addresses[0]);
+      } catch (err) { /* sessionStorage may be unavailable */ }
     }
   }
 
   if (!walletAddress) {
     return (
-      <div style={{ textAlign: "center", padding: "4rem 2rem" }}>
+      <div className="page-container" style={{ textAlign: "center", paddingTop: "4rem", paddingBottom: "4rem" }}>
         <h2 style={{ marginBottom: "2rem" }}>Create Time Capsule</h2>
         <p style={{ color: "var(--text-muted)", marginBottom: "2rem" }}>
           Connect your wallet to create a new time capsule vault.
@@ -321,25 +229,16 @@ export default function CreateCapsule() {
     );
   }
 
-  const blockTimestampSec = currentTimestamp !== null ? Number(currentTimestamp) : Math.floor(Date.now() / 1000);
-  // Parse the local datetime components directly from the ISO string to avoid UTC interpretation issues
-  const dateMatch = form.unlockDatetime.match(/^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2})/);
-  const userUnlockSec = dateMatch
-    ? Date.UTC(Number(dateMatch[1]), Number(dateMatch[2]) - 1, Number(dateMatch[3]), Number(dateMatch[4]), Number(dateMatch[5])) / 1000
-    : Math.floor(Date.now() / 1000);
-  const rawLockSeconds = userUnlockSec - blockTimestampSec;
-  const lockSeconds = rawLockSeconds < 0 ? null : Math.max(rawLockSeconds, 300);
-
   return (
-    <div>
-      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "1.5rem" }}>
+    <div className="page-container">
+      <div className="page-header">
         <h2>Create Time Capsule</h2>
-        <div style={{ display: "flex", gap: "0.5rem", alignItems: "center" }}>
-          <span style={{ fontSize: "0.85rem", color: "var(--text-muted)", fontFamily: "monospace" }}>
+        <div className="flex items-center gap-1">
+          <span className="text-sm text-muted font-mono">
             {walletAddress?.slice(0, 6)}...{walletAddress?.slice(-4)}
           </span>
-          <Link to="/claim" style={{ color: "var(--accent-light)", fontSize: "0.9rem" }}>
-            Claim →
+          <Link to="/claim" className="link-arrow">
+            Claim <span>→</span>
           </Link>
         </div>
       </div>
@@ -347,182 +246,142 @@ export default function CreateCapsule() {
       <Disclaimer />
 
       {createdCapsule ? (
-        <div>
+        <div className="animate-in">
           <CapsuleCard capsule={createdCapsule} />
-          {/* Show the actual stored unlock time — this is what the contract recorded */}
-          <div style={{ marginTop: "0.75rem", padding: "0.75rem", background: "rgba(124,58,237,0.08)", border: "1px solid rgba(124,58,237,0.2)", borderRadius: "8px", fontSize: "0.85rem" }}>
-            <span style={{ color: "var(--text-muted)" }}>Stored unlock time: </span>
-            <span style={{ color: "var(--accent)", fontFamily: "monospace", fontWeight: 600 }}>
-              {(() => {
-                const ts = Number(createdCapsule.unlockTimestamp);
-                if (isNaN(ts) || ts <= 0) return "Unlocked";
-                const d = new Date(ts * 1000);
-                const pad = (n: number) => String(n).padStart(2, "0");
-                return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`;
-              })()}
-            </span>
-            <span style={{ color: "var(--text-muted)", fontSize: "0.75rem", marginLeft: "0.5rem" }}>
-              (finalized at transaction time)
+
+          <div className="card mt-1" style={{ padding: "0.75rem" }}>
+            <span className="text-muted text-sm">Lock Duration: </span>
+            <span className="text-accent font-mono font-bold">
+              {createdCapsule.lockDuration ? formatLockDuration(Number(createdCapsule.lockDuration)) : "N/A"}
             </span>
           </div>
-          <p style={{ color: "var(--success)", marginTop: "1rem", fontWeight: 600 }}>
+
+          <p className="text-success mt-2 font-bold">
             {txHash}
           </p>
-          <p style={{ color: "var(--text-muted)", fontSize: "0.9rem", marginTop: "0.5rem" }}>
-            Your message has been <strong>encrypted</strong> with the first beneficiary's address and unlock time.
-            Only beneficiaries can decrypt it after the unlock time.
-          </p>
-
-          {/* Beneficiary summary for founder */}
-          <div style={{ background: "var(--card)", border: "1px solid var(--border)", borderRadius: "10px", padding: "1rem", marginTop: "1rem" }}>
-            <p style={{ fontSize: "0.8rem", color: "var(--text-muted)", marginBottom: "0.75rem" }}>
-              Beneficiaries & Allocations:
+          {createdCapsule?.messageHash ? (
+            <p className="text-success text-sm mt-1">
+              Your message has been <strong>encrypted</strong> with the first beneficiary address + unlock time.
             </p>
+          ) : (
+            <p className="text-muted text-sm mt-1">
+              No message was attached to this capsule.
+            </p>
+          )}
+
+          {/* Beneficiary summary */}
+          <div className="share-box">
+            <p className="text-muted text-xs mb-1">Beneficiaries &amp; Allocations:</p>
             {form.beneficiaries.map((b, i) => (
-              <div key={i} style={{ display: "flex", justifyContent: "space-between", fontSize: "0.85rem", marginBottom: "0.25rem" }}>
-                <span style={{ fontFamily: "monospace", color: "var(--accent)" }}>
-                  {b.address.slice(0, 6)}...{b.address.slice(-4)}
+              <div key={i} className="flex justify-between text-sm mb-quarter" style={{ marginBottom: "0.25rem" }}>
+                <span className="font-mono text-accent">
+                  {b.address ? `${b.address.slice(0, 6)}...${b.address.slice(-4)}` : "—"}
                 </span>
-                <span style={{ color: "var(--text)" }}>
-                  {b.allocation}%
-                </span>
+                <span className="text">{b.allocation}%</span>
               </div>
             ))}
           </div>
 
           {/* Shareable link */}
-          <div style={{ background: "var(--card)", border: "1px solid var(--border)", borderRadius: "10px", padding: "1rem", marginTop: "1rem" }}>
-            <p style={{ fontSize: "0.8rem", color: "var(--text-muted)", marginBottom: "0.75rem" }}>
-              Share this link with your beneficiaries:
-            </p>
-            <code style={{ fontSize: "0.85rem", color: "var(--accent)", wordBreak: "break-all" }}>
+          <div className="share-box">
+            <p className="text-muted text-xs mb-1">Share this link with your beneficiaries:</p>
+            <code className="font-mono text-accent text-sm" style={{ wordBreak: "break-all" }}>
               {typeof window !== "undefined" ? `${window.location.origin}/receive/${createdCapsule.founder}/${createdCapsule.id}` : ""}
             </code>
-            <div style={{ display: "flex", justifyContent: "center", marginTop: "1rem" }}>
-              <canvas ref={qrCanvasRef} style={{ borderRadius: "8px" }} />
+            <div className="flex justify-center mt-1">
+              <canvas ref={qrCanvasRef} className="qr-canvas" />
             </div>
             <button
+              className="btn btn-ghost btn-sm mt-1"
+              style={{ width: "100%" }}
               onClick={() => {
                 const url = `${window.location.origin}/receive/${createdCapsule.founder}/${createdCapsule.id}`;
                 navigator.clipboard.writeText(url);
-              }}
-              style={{
-                marginTop: "0.75rem",
-                background: "transparent",
-                border: "1px solid var(--border)",
-                borderRadius: "6px",
-                padding: "0.4rem 0.8rem",
-                color: "var(--text-muted)",
-                fontSize: "0.8rem",
-                cursor: "pointer",
               }}
             >
               Copy Link
             </button>
           </div>
 
+          {/* Create another */}
+          <div className="mt-3">
+            <p className="text-muted text-sm mb-1">Create another capsule:</p>
+            <DurationSelector
+              value={form.duration}
+              onChange={(seconds) => setForm({ ...form, duration: seconds })}
+              minDuration={60}
+            />
+          </div>
+
           <button
+            className="btn btn-primary mt-2"
             onClick={() => setCreatedCapsule(null)}
-            style={{
-              marginTop: "1rem",
-              background: "var(--accent)",
-              color: "#fff",
-              border: "none",
-              borderRadius: "8px",
-              padding: "0.5rem 1rem",
-              cursor: "pointer",
-            }}
           >
             Create Another
           </button>
         </div>
       ) : (
-        <form onSubmit={handleSubmit} style={{ display: "flex", flexDirection: "column", gap: "1.25rem" }}>
+        <form onSubmit={handleSubmit} className="flex flex-col gap-3">
           {error && (
-            <div style={{ background: "rgba(239,68,68,0.1)", color: "#ef4444", padding: "0.75rem", borderRadius: "8px", fontSize: "0.9rem" }}>
+            <div className="alert alert-danger">
               {parseContractError(error)}
             </div>
           )}
 
-          {/* Beneficiaries Section */}
-          <div>
-            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "0.5rem" }}>
-              <label style={{ fontSize: "0.9rem", color: "var(--text-muted)" }}>
-                Beneficiaries & Allocations
-              </label>
-              <span style={{
-                fontSize: "0.8rem",
-                fontWeight: 600,
-                color: isAllocationValid ? "var(--success)" : "#ef4444",
-              }}>
+          {/* Beneficiaries */}
+          <div className="card">
+            <div className="flex justify-between items-center mb-1">
+              <label className="label" style={{ margin: 0 }}>Beneficiaries &amp; Allocations</label>
+              <span
+                className={`text-xs font-bold ${isAllocationValid ? "text-success" : "text-danger"}`}
+              >
                 Total: {totalAllocation}% {isAllocationValid ? "✓" : "(must be 100%)"}
               </span>
             </div>
 
-            <div style={{ display: "flex", flexDirection: "column", gap: "0.75rem" }}>
+            <div className="flex flex-col gap-1">
               {form.beneficiaries.map((beneficiary, index) => (
-                <div key={index} style={{ display: "flex", gap: "0.5rem", alignItems: "center" }}>
+                <div key={index} className="flex gap-1 items-center">
                   <input
                     type="text"
+                    className="input"
                     value={beneficiary.address}
                     onChange={(e) => updateBeneficiary(index, "address", e.target.value)}
                     placeholder="0x..."
                     required
-                    style={{
-                      flex: 1,
-                      background: "var(--card)",
-                      border: "1px solid var(--border)",
-                      borderRadius: "8px",
-                      padding: "0.75rem",
-                      color: "var(--text)",
-                      fontSize: "0.9rem",
-                    }}
                   />
-                  <div style={{ position: "relative", width: "90px" }}>
+                  <div style={{ position: "relative", width: "90px", flexShrink: 0 }}>
                     <input
                       type="number"
+                      className="input"
                       value={beneficiary.allocation}
                       onChange={(e) => updateBeneficiary(index, "allocation", e.target.value)}
                       placeholder="%"
                       min="1"
                       max="100"
                       required
-                      style={{
-                        width: "100%",
-                        background: "var(--card)",
-                        border: "1px solid var(--border)",
-                        borderRadius: "8px",
-                        padding: "0.75rem",
-                        paddingRight: "1.5rem",
-                        color: "var(--text)",
-                        fontSize: "0.9rem",
-                      }}
+                      style={{ paddingRight: "1.5rem" }}
                     />
-                    <span style={{
-                      position: "absolute",
-                      right: "10px",
-                      top: "50%",
-                      transform: "translateY(-50%)",
-                      color: "var(--text-muted)",
-                      fontSize: "0.8rem",
-                      pointerEvents: "none",
-                    }}>
+                    <span
+                      style={{
+                        position: "absolute",
+                        right: "10px",
+                        top: "50%",
+                        transform: "translateY(-50%)",
+                        color: "var(--text-muted)",
+                        fontSize: "0.8rem",
+                        pointerEvents: "none",
+                      }}
+                    >
                       %
                     </span>
                   </div>
                   {form.beneficiaries.length > 1 && (
                     <button
                       type="button"
+                      className="btn btn-danger btn-sm"
+                      style={{ flexShrink: 0, padding: "0.4rem 0.6rem", minHeight: "unset" }}
                       onClick={() => removeBeneficiary(index)}
-                      style={{
-                        background: "transparent",
-                        border: "1px solid rgba(239,68,68,0.3)",
-                        borderRadius: "6px",
-                        padding: "0.5rem 0.6rem",
-                        color: "#ef4444",
-                        fontSize: "0.85rem",
-                        cursor: "pointer",
-                      }}
                     >
                       ×
                     </button>
@@ -534,125 +393,66 @@ export default function CreateCapsule() {
             {canAddBeneficiary && (
               <button
                 type="button"
+                className="btn btn-ghost btn-sm mt-1"
+                style={{ width: "100%", borderStyle: "dashed" }}
                 onClick={addBeneficiary}
-                style={{
-                  marginTop: "0.75rem",
-                  background: "transparent",
-                  border: "1px dashed var(--border)",
-                  borderRadius: "8px",
-                  padding: "0.6rem",
-                  color: "var(--text-muted)",
-                  fontSize: "0.85rem",
-                  cursor: "pointer",
-                  width: "100%",
-                }}
               >
                 + Add Beneficiary (max {MAX_BENEFICIARIES})
               </button>
             )}
           </div>
 
-          {/* Unlock DateTime */}
-          <div>
-            <label style={{ display: "block", marginBottom: "0.5rem", fontSize: "0.9rem", color: "var(--text-muted)" }}>
-              Unlock Date & Time
-            </label>
-            <DateTimePicker
-              value={form.unlockDatetime}
-              onChange={(iso) => setForm({ ...form, unlockDatetime: iso })}
-              chainTimestamp={currentTimestamp}
+          {/* Lock Duration */}
+          <div className="card">
+            <label className="label">Lock Duration</label>
+            <DurationSelector
+              value={form.duration}
+              onChange={(seconds) => setForm({ ...form, duration: seconds })}
+              minDuration={60}
             />
-            <div style={{ marginTop: "0.5rem", display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: "0.5rem" }}>
-              <span style={{ color: lockSeconds === null ? "#ef4444" : "var(--text-muted)", fontSize: "0.8rem" }}>
-                {lockSeconds === null
-                  ? "Selected time has passed or is too close — please choose a future time at least 5 minutes away"
-                  : `Lock duration: ${formatLockDuration(lockSeconds)}`}
-              </span>
-              <span style={{ color: "var(--text-muted)", fontSize: "0.8rem" }}>
-                {(() => {
-                  const m = form.unlockDatetime.match(/^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2})/);
-                  return m ? new Date(Number(m[1]), Number(m[2]) - 1, Number(m[3]), Number(m[4]), Number(m[5])).toLocaleString() : form.unlockDatetime;
-                })()}
-              </span>
-            </div>
-            {/* Chain time reference */}
-            {currentTimestamp !== null && (
-              <div style={{ marginTop: "0.4rem", fontSize: "0.7rem", color: "var(--text-muted)", fontFamily: "monospace" }}>
-                <span style={{ color: "#f59e0b" }}>Now (chain): </span>{new Date(Number(currentTimestamp) * 1000).toLocaleString()}
-                <span style={{ marginLeft: "0.75rem", color: "#f59e0b" }}>Drift: </span>{((Number(currentTimestamp) - Math.floor(Date.now() / 1000)) / 3600).toFixed(1)}h
-              </div>
+            {form.duration !== null && (
+              <p className="duration-hint">Lock duration: {formatLockDuration(form.duration)}</p>
             )}
-            <p style={{ color: "var(--text-muted)", fontSize: "0.75rem", marginTop: "0.4rem" }}>
-              This is your selected time. The actual stored time may shift slightly based on network confirmation (min 5 min lock).
-            </p>
           </div>
 
           {/* ETH Amount */}
-          <div>
-            <label style={{ display: "block", marginBottom: "0.5rem", fontSize: "0.9rem", color: "var(--text-muted)" }}>
-              ETH Amount (min {MIN_FEE_ETH})
-            </label>
+          <div className="form-group">
+            <label className="label">ETH Amount (min {MIN_FEE_ETH})</label>
             <input
               type="number"
+              className="input"
               value={form.ethAmount}
               onChange={(e) => setForm({ ...form, ethAmount: e.target.value })}
               min={MIN_FEE_ETH}
               step="0.001"
               required
-              style={{
-                width: "100%",
-                background: "var(--card)",
-                border: "1px solid var(--border)",
-                borderRadius: "8px",
-                padding: "0.75rem",
-                color: "var(--text)",
-                fontSize: "0.95rem",
-              }}
             />
           </div>
 
-          {/* Encrypted Message */}
-          <div>
-            <label style={{ display: "block", marginBottom: "0.5rem", fontSize: "0.9rem", color: "var(--text-muted)" }}>
-              Message (optional — AES-256 encrypted with beneficiary key + unlock time)
-            </label>
+          {/* Message */}
+          <div className="form-group">
+            <label className="label">Message (optional — AES-256 encrypted)</label>
             <textarea
+              className="input"
               value={form.message}
               onChange={(e) => setForm({ ...form, message: e.target.value })}
-              placeholder="Write a message to your beneficiaries... It will be encrypted and only they can decrypt it after unlock."
+              placeholder="Write a message to your beneficiaries... It will be encrypted and only they can decrypt after unlock."
               rows={4}
-              style={{
-                width: "100%",
-                background: "var(--card)",
-                border: "1px solid var(--border)",
-                borderRadius: "8px",
-                padding: "0.75rem",
-                color: "var(--text)",
-                fontSize: "0.95rem",
-                resize: "vertical",
-              }}
             />
-            <p style={{ color: "var(--text-muted)", fontSize: "0.75rem", marginTop: "0.4rem" }}>
+            <p className="text-muted text-xs mt-1">
               Encrypted with AES-256-GCM. Key = keccak256(first beneficiary + unlock time).
-              Cannot be decrypted without both factors.
             </p>
           </div>
 
           {/* Gas Estimate */}
           {gasEstimate && (
-            <div style={{
-              background: gasEstimate.success ? "rgba(34,197,94,0.08)" : "rgba(239,68,68,0.08)",
-              border: `1px solid ${gasEstimate.success ? "rgba(34,197,94,0.25)" : "rgba(239,68,68,0.25)"}`,
-              borderRadius: "8px",
-              padding: "0.75rem",
-              fontSize: "0.85rem",
-            }}>
+            <div className={`alert ${gasEstimate.success ? "alert-success" : "alert-danger"}`}>
               {gasEstimate.success ? (
-                <span style={{ color: "var(--success)" }}>
+                <span className="text-success">
                   Estimated gas: ~{gasEstimate.costEth.toFixed(6)} ETH
                 </span>
               ) : (
-                <span style={{ color: "#ef4444" }}>
+                <span className="text-danger">
                   Gas estimation unavailable: {gasEstimate.error}
                 </span>
               )}
@@ -661,18 +461,8 @@ export default function CreateCapsule() {
 
           <button
             type="submit"
-            disabled={loading || uploading || lockSeconds === null || !isAllocationValid}
-            style={{
-              background: "var(--accent)",
-              color: "#fff",
-              border: "none",
-              borderRadius: "8px",
-              padding: "1rem",
-              fontSize: "1rem",
-              fontWeight: 600,
-              cursor: loading || uploading || lockSeconds === null || !isAllocationValid ? "not-allowed" : "pointer",
-              opacity: loading || uploading || lockSeconds === null || !isAllocationValid ? 0.7 : 1,
-            }}
+            className="btn btn-primary btn-full btn-lg"
+            disabled={loading || uploading || form.duration === null || form.duration < 60 || !isAllocationValid}
           >
             {uploading ? "Encrypting & uploading..." : loading ? "Creating..." : "Create Capsule"}
           </button>
