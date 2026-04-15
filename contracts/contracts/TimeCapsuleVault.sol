@@ -103,7 +103,7 @@ contract TimeCapsuleVault is Ownable, ReentrancyGuard, Pausable, EIP712 {
     /// @param beneficiaryAddresses Array of beneficiary addresses
     /// @param allocations Array of allocation percentages (must sum to 100)
     /// @param lockDuration Duration in seconds from now until the capsule unlocks
-    /// @param messageHash IPFS CID of the optional message (empty string = no message)
+    /// @param messageHash Encrypted message payload stored on-chain (empty string = no message)
     /// @return capsuleId The ID of the newly created capsule
     function createCapsule(
         address[] calldata beneficiaryAddresses,

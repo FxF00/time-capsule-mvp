@@ -67,25 +67,30 @@ Beneficiary
 This project implements several blockchain-native governance mechanisms:
 
 ### Transparency & Auditability
+
 All capsule data (founder, beneficiaries, allocations, timestamps, encrypted messages) is stored on-chain and publicly readable. Every state change emits an EVM event for off-chain indexing and audit trails:
+
 - `CapsuleCreated` — capsule initiated with full parameters
 - `BeneficiaryAdded` — each beneficiary and their allocation % logged
 - `WithdrawalClaimed` — each claim event recorded on-chain
 - `CapsuleCancelled` — cancellation and fund return logged
 
 ### Access Control
+
 - **Owner** (`Ownable`) — can pause/unpause the contract
 - **Founder** — sole authority to create capsules and update the encrypted message; cannot touch beneficiary funds after creation
 - **Beneficiaries** — can only claim their own allocation after unlock; no access to other beneficiaries' shares
 - **Beneficiary uniqueness** — duplicate beneficiary addresses are rejected at creation time
 
 ### Data Integrity
+
 - **Immutable capsule data** — after creation, beneficiary list and allocations cannot be altered by anyone (only `messageHash` can be updated by founder)
 - **On-chain unlock enforcement** — unlock timestamp is computed on-chain (`createdAt + lockDuration`), eliminating front-end time drift
 - **Encrypted message integrity** — AES-256-GCM with 96-bit IV and 128-bit auth tag; any tampering is detected at decryption
 - **Allocation sum enforcement** — contract rejects capsules where beneficiary allocations do not sum to exactly 100%
 
 ### Non-Repudiation
+
 - **EIP-712 typed-data signatures** — `claimBySig()` accepts EIP-712 signatures, enabling beneficiary meta-transactions with cryptographic proof of intent
 - **Beneficiary nonces** — prevents replay attacks on claim signatures
 
@@ -114,7 +119,7 @@ All capsule data (founder, beneficiaries, allocations, timestamps, encrypted mes
 └─────────────────────────────────────────────────────┘
                        │
                        │ On-chain storage only
-                       │ (messageHash = encrypted message, no IPFS)
+                       │ (messageHash = encrypted message)
                        ▼
                Encrypted message stored in
                Capsule.messageHash (on-chain)
@@ -122,8 +127,9 @@ All capsule data (founder, beneficiaries, allocations, timestamps, encrypted mes
 
 ### Smart Contracts
 
-| Contract | Purpose |
-|---|---|
+
+| Contract               | Purpose                                            |
+| ---------------------- | -------------------------------------------------- |
 | `TimeCapsuleVault.sol` | Main vault — stores capsules, ETH, manages claims |
 
 ---
@@ -135,15 +141,14 @@ Messages are encrypted client-side (in the browser) and stored directly on-chain
 ### Algorithm: AES-256-GCM
 
 1. **Key derivation** — The symmetric key is derived as:
+
    ```
    key = keccak256(ethers.solidityPacked(address, uint256)(primaryBeneficiaryAddress, unlockTimestamp))
    ```
+
    Both values are publicly known on-chain. The founder derives the key at creation time to encrypt; the primary beneficiary derives the same key after unlock to decrypt.
-
 2. **Encryption** — A random 96-bit IV is generated per message. The plaintext is encrypted with AES-256-GCM using the derived key. The IV is prepended to the ciphertext.
-
 3. **Storage** — The encrypted blob is stored directly on-chain in `capsule.messageHash`. No IPFS or off-chain storage.
-
 4. **Decryption** — After `block.timestamp > unlockTimestamp`, the primary beneficiary calls `claim()` on-chain and then decrypts the message locally using their address and the now-public unlock timestamp.
 
 ### Why this is time-lock secure
@@ -229,12 +234,10 @@ Messages are encrypted client-side using AES-256-GCM and stored directly on-chai
 ### Algorithm: AES-256-GCM
 
 1. **Key derivation** — `key = keccak256(ethers.solidityPacked(address, uint256)(primaryBeneficiaryAddress, unlockTimestamp))`
+
    - Both values are publicly known on-chain, so the founder can derive the key at creation time to encrypt, and the primary beneficiary can derive the same key after unlock to decrypt.
-
 2. **Encryption** — A random 96-bit IV is generated per message. Plaintext is encrypted with AES-256-GCM using the derived key. The IV is prepended to the ciphertext.
-
 3. **Storage** — The base64-encoded ciphertext is stored directly in `capsule.messageHash` on-chain.
-
 4. **Decryption** — After unlock, primary beneficiary calls `claim()` on-chain and then decrypts the message locally using their address and the now-public unlock timestamp.
 
 ### Why this is time-lock secure
@@ -260,40 +263,43 @@ The frontend reads the vault address from `VITE_CONTRACT_ADDRESS` in `frontend/.
 
 ### Key contract functions
 
-| Function | Description |
-|---|---|
-| `createCapsule(beneficiaryAddresses[], allocations[], lockDuration, messageHash)` | Create a new capsule (requires 0.001 ETH min) |
-| `claim(capsuleId)` | Beneficiary claims their allocation after unlock |
-| `claimBySig(capsuleId, signature)` | Beneficiary claims via EIP-712 signature (meta-transaction) |
-| `cancelCapsule(capsuleId)` | Founder reclaims funds before unlock |
-| `setMessageHash(capsuleId, messageHash)` | Founder updates the encrypted message after creation |
-| `getCapsule(capsuleId)` | Returns full capsule struct |
-| `getBeneficiaryCount(capsuleId)` | Returns number of beneficiaries |
-| `isUnlocked(capsuleId)` | Returns true if unlock timestamp has passed |
-| `getTimeRemaining(capsuleId)` | Seconds until unlock |
-| `getUnlockTimestamp(capsuleId)` | Returns authoritative unlock timestamp (createdAt + lockDuration) |
-| `getMyAllocation(capsuleId)` | Returns beneficiary's % allocation and claim status |
+
+| Function                                                                          | Description                                                       |
+| --------------------------------------------------------------------------------- | ----------------------------------------------------------------- |
+| `createCapsule(beneficiaryAddresses[], allocations[], lockDuration, messageHash)` | Create a new capsule (requires 0.001 ETH min)                     |
+| `claim(capsuleId)`                                                                | Beneficiary claims their allocation after unlock                  |
+| `claimBySig(capsuleId, signature)`                                                | Beneficiary claims via EIP-712 signature (meta-transaction)       |
+| `cancelCapsule(capsuleId)`                                                        | Founder reclaims funds before unlock                              |
+| `setMessageHash(capsuleId, messageHash)`                                          | Founder updates the encrypted message after creation              |
+| `getCapsule(capsuleId)`                                                           | Returns full capsule struct                                       |
+| `getBeneficiaryCount(capsuleId)`                                                  | Returns number of beneficiaries                                   |
+| `isUnlocked(capsuleId)`                                                           | Returns true if unlock timestamp has passed                       |
+| `getTimeRemaining(capsuleId)`                                                     | Seconds until unlock                                              |
+| `getUnlockTimestamp(capsuleId)`                                                   | Returns authoritative unlock timestamp (createdAt + lockDuration) |
+| `getMyAllocation(capsuleId)`                                                      | Returns beneficiary's % allocation and claim status               |
 
 ### Contract constants
 
-| Constant | Value |
-|---|---|
-| `MIN_LOCK_SECONDS` | 60 seconds |
-| `MAX_LOCK_SECONDS` | 10 years |
-| `MIN_CREATION_FEE` | 0.001 ETH |
-| `MAX_BENEFICIARIES` | 10 |
+
+| Constant            | Value      |
+| ------------------- | ---------- |
+| `MIN_LOCK_SECONDS`  | 60 seconds |
+| `MAX_LOCK_SECONDS`  | 10 years   |
+| `MIN_CREATION_FEE`  | 0.001 ETH  |
+| `MAX_BENEFICIARIES` | 10         |
 
 ---
 
 ## Tech Stack
 
-| Layer | Technology |
-|---|---|
-| Smart contracts | Solidity ^0.8.24, OpenZeppelin 5.x |
-| Development framework | Hardhat |
-| Web3 library | ethers.js v6 |
-| Frontend | React 18, Vite 5, TypeScript |
-| Message storage | On-chain (messageHash field) — encrypted content stored directly in contract |
-| Encryption | Web Crypto API (AES-256-GCM) |
-| Contract verification | @nomicfoundation/hardhat-verify |
-| Contract types | TypeChain |
+
+| Layer                 | Technology                                                                    |
+| --------------------- | ----------------------------------------------------------------------------- |
+| Smart contracts       | Solidity ^0.8.24, OpenZeppelin 5.x                                            |
+| Development framework | Hardhat                                                                       |
+| Web3 library          | ethers.js v6                                                                  |
+| Frontend              | React 18, Vite 5, TypeScript                                                  |
+| Message storage       | On-chain (messageHash field) — encrypted content stored directly in contract |
+| Encryption            | Web Crypto API (AES-256-GCM)                                                  |
+| Contract verification | @nomicfoundation/hardhat-verify                                               |
+| Contract types        | TypeChain                                                                     |
