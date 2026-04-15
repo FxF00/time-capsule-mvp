@@ -68,9 +68,9 @@ describe("TimeCapsuleVault — cancelCapsule", function () {
 
   it("reverts when capsule was already withdrawn via full claim", async () => {
     // Capsule 0: single beneficiary, 100% allocation
-    // NOTE: Cannot test AlreadyWithdrawn after time lock expires (TimeLockActive checked first).
+    // NOTE: After full claim, isWithdrawn=true, so AlreadyWithdrawn is checked before TimeLockActive.
     // This test verifies the contract prevents double-spending by checking that after
-    // the beneficiary claims (isWithdrawn=true), the time lock still prevents cancel.
+    // the beneficiary claims (isWithdrawn=true), cancel cannot be called.
     await vault.connect(owner).createCapsule(
       [beneficiary1.address],
       [100],
@@ -85,10 +85,10 @@ describe("TimeCapsuleVault — cancelCapsule", function () {
     const capsuleAfter = await vault.getCapsule(0);
     expect(capsuleAfter.isWithdrawn).to.equal(true);
 
-    // After time lock expires, cancel cannot be called (TimeLockActive checked first)
+    // After full claim, cancel reverts with AlreadyWithdrawn (isWithdrawn checked first)
     await expect(
       vault.connect(owner).cancelCapsule(0)
-    ).to.be.revertedWithCustomError(vault, "TimeLockActive");
+    ).to.be.revertedWithCustomError(vault, "AlreadyWithdrawn");
   });
 
   it("sends only the capsule's depositedValue, not entire contract balance", async () => {
