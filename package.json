@@ -9,7 +9,9 @@
     "install:all": "npm install",
     "test": "PATH=\"/opt/homebrew/opt/node@22/bin:$PATH\" cd contracts && npx hardhat test",
     "node": "PATH=\"/opt/homebrew/opt/node@22/bin:$PATH\" cd contracts && npx hardhat node",
-    "dev:frontend": "cd frontend && npm run dev"
+    "dev:frontend": "cd frontend && npm run dev",
+    "deploy:sepolia": "cd contracts && npx hardhat run scripts/deploy.ts --network sepolia",
+    "verify:sepolia": "cd contracts && npx hardhat run scripts/verify.ts --network sepolia"
   },
   "devDependencies": {
     "@types/qrcode": "^1.5.6",

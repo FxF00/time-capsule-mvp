@@ -55,12 +55,8 @@ async function main() {
   console.log("\n========================================");
   console.log("Verification Commands");
   console.log("========================================");
-  if (networkName === "mumbai") {
-    console.log(`npx hardhat run scripts/verify.ts --network mumbai`);
-  } else if (networkName === "polygon") {
-    console.log(`npx hardhat run scripts/verify.ts --network polygon`);
-  } else if (networkName === "amoy") {
-    console.log(`npx hardhat run scripts/verify.ts --network amoy`);
+  if (networkName === "sepolia") {
+    console.log(`npx hardhat run scripts/verify.ts --network sepolia`);
   } else {
     console.log("(Verification not needed for this network)");
   }

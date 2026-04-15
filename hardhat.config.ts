@@ -6,8 +6,9 @@ import * as dotenv from "dotenv";
 
 dotenv.config();
 
-const POLYGON_MUMBAI_RPC = process.env.POLYGON_MUMBAI_RPC || "https://rpc-mumbai.maticvigil.com";
-const PRIVATE_KEY = process.env.PRIVATE_KEY || "0x0000000000000000000000000000000000000000000000000000000000000000";
+const SEPOLIA_RPC = process.env.SEPOLIA_RPC || "https://rpc.sepolia.org";
+const PRIVATE_KEY = process.env.DEPLOYER_PRIVATE_KEY || "0x0000000000000000000000000000000000000000000000000000000000000000";
+const ETHERSCAN_API_KEY = process.env.ETHERSCAN_API_KEY || "";
 
 // 10 accounts with 1 ETH balance + 10 accounts with 0 ETH balance
 const TEST_ACCOUNTS = [
@@ -56,27 +57,15 @@ const config: HardhatUserConfig = {
         interval: 5000, // mine a block every 5 seconds to keep time in sync
       },
     },
-    mumbai: {
-      url: POLYGON_MUMBAI_RPC,
+    sepolia: {
+      url: SEPOLIA_RPC,
       accounts: [PRIVATE_KEY],
-      chainId: 80001
-    },
-    polygon: {
-      url: process.env.POLYGON_RPC || "https://polygon-rpc.com",
-      accounts: [PRIVATE_KEY],
-      chainId: 137
-    },
-    amoy: {
-      url: process.env.POLYGON_AMOY_RPC || "https://rpc-amoy.polygon.technology",
-      accounts: [PRIVATE_KEY],
-      chainId: 80002
+      chainId: 11155111
     }
   },
   etherscan: {
     apiKey: {
-      polygon: process.env.POLYGONSCAN_API_KEY || "",
-      polygonMumbai: process.env.POLYGONSCAN_API_KEY || "",
-      polygonAmoy: process.env.POLYGONSCAN_API_KEY || "",
+      sepolia: ETHERSCAN_API_KEY,
     }
   },
   verify: {
