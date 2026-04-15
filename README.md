@@ -1,6 +1,6 @@
 # Time Capsule DAO — MVP
 
-A time-locked ETH vault that lets you lock ETH now and designate beneficiaries who can claim it after an unlock date. Built on Polygon, with off-chain messages encrypted so only the intended beneficiary can read them after the unlock time.
+A time-locked ETH vault built with Hardhat. Lock ETH now, designate beneficiaries who can claim it after an unlock date, and attach encrypted messages only they can read. All data stored on-chain with full transparency and cryptographic access control.
 
 **Not a will. Not legal advice. Not financial advice.**
 
@@ -11,11 +11,11 @@ A time-locked ETH vault that lets you lock ETH now and designate beneficiaries w
 - [Project Overview](#project-overview)
 - [How It Works](#how-it-works)
 - [Key Features](#key-features)
+- [Data Governance](#data-governance)
 - [Architecture](#architecture)
 - [How the Time-Lock Encryption Works](#how-the-time-lock-encryption-works)
 - [Local Development Setup](#local-development-setup)
-- [Testnet Deployment](#testnet-deployment)
-- [IPFS Message Encryption](#ipfs-message-encryption)
+- [Message Encryption](#message-encryption)
 - [Smart Contract ABI / Addresses](#smart-contract-abi--addresses)
 - [Tech Stack](#tech-stack)
 
@@ -23,7 +23,7 @@ A time-locked ETH vault that lets you lock ETH now and designate beneficiaries w
 
 ## Project Overview
 
-Time Capsule DAO is a non-custodial time-locked vault smart contract on Polygon. A founder locks ETH, sets a future unlock timestamp, designates beneficiaries with allocation percentages, and optionally attaches an encrypted message. After the unlock date, beneficiaries can claim their allocation directly — no intermediate custodian required. The encrypted message ensures the content remains private until the capsule is unlocked.
+Time Capsule DAO is a non-custodial time-locked vault smart contract. A founder locks ETH, sets a future unlock timestamp, designates beneficiaries with allocation percentages, and optionally attaches an encrypted message. After the unlock date, beneficiaries can claim their allocation directly — no intermediate custodian required. The encrypted message ensures the content remains private until the capsule is unlocked.
 
 ---
 
@@ -57,8 +57,37 @@ Beneficiary
 - **Shareable capsule links** — QR code / URL lets beneficiaries view and claim their capsule
 - **Time-lock encrypted messages** — AES-256-GCM encrypted messages stored on-chain; only the primary beneficiary can decrypt after unlock
 - **No custody risk** — funds go directly from vault to beneficiary; no middleman
-- **Pausable by owner** — emergency stop mechanism built on OpenZeppelin Pausable
-- **Re-entrancy protection** — OpenZeppelin ReentrancyGuard on all state-changing functions
+- **Pausable by owner** — emergency stop mechanism built on OpenZeppelin Pausable (excludes `setMessageHash`)
+- **Re-entrancy protection** — OpenZeppelin ReentrancyGuard on `claim()`, `claimBySig()`, and `cancelCapsule()`
+
+---
+
+## Data Governance
+
+This project implements several blockchain-native governance mechanisms:
+
+### Transparency & Auditability
+All capsule data (founder, beneficiaries, allocations, timestamps, encrypted messages) is stored on-chain and publicly readable. Every state change emits an EVM event for off-chain indexing and audit trails:
+- `CapsuleCreated` — capsule initiated with full parameters
+- `BeneficiaryAdded` — each beneficiary and their allocation % logged
+- `WithdrawalClaimed` — each claim event recorded on-chain
+- `CapsuleCancelled` — cancellation and fund return logged
+
+### Access Control
+- **Owner** (`Ownable`) — can pause/unpause the contract
+- **Founder** — sole authority to create capsules and update the encrypted message; cannot touch beneficiary funds after creation
+- **Beneficiaries** — can only claim their own allocation after unlock; no access to other beneficiaries' shares
+- **Beneficiary uniqueness** — duplicate beneficiary addresses are rejected at creation time
+
+### Data Integrity
+- **Immutable capsule data** — after creation, beneficiary list and allocations cannot be altered by anyone (only `messageHash` can be updated by founder)
+- **On-chain unlock enforcement** — unlock timestamp is computed on-chain (`createdAt + lockDuration`), eliminating front-end time drift
+- **Encrypted message integrity** — AES-256-GCM with 96-bit IV and 128-bit auth tag; any tampering is detected at decryption
+- **Allocation sum enforcement** — contract rejects capsules where beneficiary allocations do not sum to exactly 100%
+
+### Non-Repudiation
+- **EIP-712 typed-data signatures** — `claimBySig()` accepts EIP-712 signatures, enabling beneficiary meta-transactions with cryptographic proof of intent
+- **Beneficiary nonces** — prevents replay attacks on claim signatures
 
 ---
 
@@ -69,7 +98,7 @@ Beneficiary
 │                  React Frontend                      │
 │            (Vite + TypeScript + ethers.js v6)       │
 │                                                     │
-│  Pages: CreateCapsule | ClaimCapsule | ReceiveCapsule│
+│  Pages: Create | Claim | History                          │
 │  Components: WalletConnect, CapsuleCard, Countdown   │
 └──────────────────────┬──────────────────────────────┘
                        │ ethers.js v6
@@ -77,10 +106,10 @@ Beneficiary
                        ▼
 ┌─────────────────────────────────────────────────────┐
 │           TimeCapsuleVault (Solidity)               │
-│         [Polygon mainnet / Mumbai testnet]           │
+│         [Hardhat local node — deployable to any EVM network]  │
 │                                                     │
-│  State: capsules[], beneficiaryIndices[][]           │
-│  Core: createCapsule(), claim(), cancelCapsule()    │
+│  State: capsules[], beneficiaryIndices mapping       │
+│  Core: createCapsule(), claim(), claimBySig(), cancelCapsule() |
 │  Security: Ownable, ReentrancyGuard, Pausable       │
 └─────────────────────────────────────────────────────┘
                        │
@@ -107,7 +136,7 @@ Messages are encrypted client-side (in the browser) and stored directly on-chain
 
 1. **Key derivation** — The symmetric key is derived as:
    ```
-   key = keccak256(abi.encode(primaryBeneficiaryAddress, unlockTimestamp))
+   key = keccak256(ethers.solidityPacked(address, uint256)(primaryBeneficiaryAddress, unlockTimestamp))
    ```
    Both values are publicly known on-chain. The founder derives the key at creation time to encrypt; the primary beneficiary derives the same key after unlock to decrypt.
 
@@ -193,62 +222,13 @@ npm run test
 
 ---
 
-## Testnet Deployment
-
-### Get test MATIC
-
-Request MATIC from the Polygon faucet:
-
-- **Mumbai:** https://mumbai.polygonscan.com/ — use the "Faucet" button on the dashboard after connecting your wallet
-- Or: https://faucet.polygon.technology/
-
-### Configure environment
-
-Copy `.env.example` to `contracts/.env` and fill in your values:
-
-```bash
-cp .env.example contracts/.env
-```
-
-Edit `contracts/.env`:
-```env
-PRIVATE_KEY=0x_your_burner_wallet_private_key
-POLYGONSCAN_API_KEY=your_polygonscan_api_key
-```
-
-Get a free Polygonscan API key at https://polygonscan.com/apis
-
-### Deploy to Mumbai testnet
-
-```bash
-npm run deploy:mumbai
-```
-
-### Deploy to Polygon mainnet
-
-```bash
-npm run deploy:polygon
-```
-
-> **Note:** Polygon Mumbai is deprecated. For production testnet deployment, use the Amoy testnet. Update `hardhat.config.ts` to add an `amoy` network entry with RPC `https://rpc-amoy.polygon.technology/` and chain ID `80002`, then add a corresponding `deploy:amoy` script.
-
-### Update frontend with deployed address
-
-After deployment, update the contract address in `frontend/.env`:
-
-```
-VITE_CONTRACT_ADDRESS=0x_your_deployed_vault_address
-```
-
----
-
 ## Message Encryption
 
 Messages are encrypted client-side using AES-256-GCM and stored directly on-chain in the `messageHash` field. No server or IPFS involved — only the primary beneficiary (first in the beneficiary list) can decrypt after unlock.
 
 ### Algorithm: AES-256-GCM
 
-1. **Key derivation** — `key = keccak256(abi.encode(primaryBeneficiaryAddress, unlockTimestamp))`
+1. **Key derivation** — `key = keccak256(ethers.solidityPacked(address, uint256)(primaryBeneficiaryAddress, unlockTimestamp))`
    - Both values are publicly known on-chain, so the founder can derive the key at creation time to encrypt, and the primary beneficiary can derive the same key after unlock to decrypt.
 
 2. **Encryption** — A random 96-bit IV is generated per message. Plaintext is encrypted with AES-256-GCM using the derived key. The IV is prepended to the ciphertext.
@@ -270,7 +250,7 @@ Deployed contract addresses are saved in `scripts/deployments.json` after each d
 
 ```json
 {
-  "network": "mumbai",
+  "network": "localhost",
   "vault": "0x...",
   "timestamp": "2026-04-08T..."
 }
@@ -284,10 +264,13 @@ The frontend reads the vault address from `VITE_CONTRACT_ADDRESS` in `frontend/.
 |---|---|
 | `createCapsule(beneficiaries[], allocations[], lockDurationSeconds, messageHash)` | Create a new capsule (requires 0.001 ETH min) |
 | `claim(capsuleId)` | Beneficiary claims their allocation after unlock |
+| `claimBySig(capsuleId, signature)` | Beneficiary claims via EIP-712 signature (meta-transaction) |
 | `cancelCapsule(capsuleId)` | Founder reclaims funds before unlock |
+| `setMessageHash(capsuleId, messageHash)` | Founder updates the encrypted message after creation |
 | `getCapsule(capsuleId)` | Returns full capsule struct |
 | `isUnlocked(capsuleId)` | Returns true if unlock timestamp has passed |
 | `getTimeRemaining(capsuleId)` | Seconds until unlock |
+| `getUnlockTimestamp(capsuleId)` | Returns authoritative unlock timestamp (createdAt + lockDuration) |
 | `getMyAllocation(capsuleId)` | Returns beneficiary's % allocation and claim status |
 
 ### Contract constants
@@ -309,7 +292,7 @@ The frontend reads the vault address from `VITE_CONTRACT_ADDRESS` in `frontend/.
 | Development framework | Hardhat |
 | Web3 library | ethers.js v6 |
 | Frontend | React 18, Vite 5, TypeScript |
-| Message storage | On-chain (messageHash field) — no IPFS |
+| Message storage | On-chain (messageHash field) — encrypted content stored directly in contract |
 | Encryption | Web Crypto API (AES-256-GCM) |
 | Contract verification | @nomicfoundation/hardhat-verify |
 | Contract types | TypeChain |

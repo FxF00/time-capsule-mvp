@@ -64,8 +64,6 @@ contract TimeCapsuleVault is Ownable, ReentrancyGuard, Pausable, EIP712 {
     mapping(uint256 => mapping(address => bool)) public claimedBySig;
     // beneficiary address => nonce for meta-transactions
     mapping(address => uint256) public beneficiaryNonces;
-    // trusted relayer address for meta-transactions
-    address public relayer;
 
     // ============ Events ============
     event CapsuleCreated(
@@ -293,12 +291,6 @@ contract TimeCapsuleVault is Ownable, ReentrancyGuard, Pausable, EIP712 {
 
     function unpause() external onlyOwner {
         _unpause();
-    }
-
-    /// @notice Set trusted relayer address for meta-transactions
-    /// @param _relayer The address of the trusted relayer
-    function setTrustedRelayer(address _relayer) external onlyOwner {
-        relayer = _relayer;
     }
 
     // ============ Internal ============
