@@ -98,7 +98,6 @@ Beneficiary
 | Contract | Purpose |
 |---|---|
 | `TimeCapsuleVault.sol` | Main vault — stores capsules, ETH, manages claims |
-| `MessageRegistry.sol` | Ownable registry for IPFS CIDs (optional) |
 
 ---
 
@@ -298,7 +297,7 @@ The frontend reads the vault address from `VITE_CONTRACT_ADDRESS` in `frontend/.
 
 | Constant | Value |
 |---|---|
-| `MIN_LOCK_SECONDS` | 1 day |
+| `MIN_LOCK_SECONDS` | 60 seconds |
 | `MAX_LOCK_SECONDS` | 10 years |
 | `MIN_CREATION_FEE` | 0.001 ETH |
 | `MAX_BENEFICIARIES` | 10 |
@@ -309,7 +308,7 @@ The frontend reads the vault address from `VITE_CONTRACT_ADDRESS` in `frontend/.
 
 | Layer | Technology |
 |---|---|
-| Smart contracts | Solidity 0.8.20, OpenZeppelin 5.x |
+| Smart contracts | Solidity ^0.8.24, OpenZeppelin 5.x |
 | Development framework | Hardhat |
 | Web3 library | ethers.js v6 |
 | Frontend | React 18, Vite 5, TypeScript |
