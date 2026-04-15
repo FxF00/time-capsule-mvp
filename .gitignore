@@ -1,0 +1,19 @@
+# Dependencies
+node_modules/
+
+# Build outputs
+dist/
+build/
+artifacts/
+cache/
+typechain-types/
+
+# Environment (contains secrets)
+.env
+.env.local
+
+# OS files
+.DS_Store
+
+# Docs (development artifacts)
+docs/

@@ -2,6 +2,7 @@ import { useState, useEffect, useCallback } from "react";
 import { ethers } from "ethers";
 import { Link } from "react-router-dom";
 import { getVaultContract, VAULT_ABI, CONTRACT_ADDRESS } from "../lib/contracts";
+import WalletConnect from "../components/WalletConnect";
 
 type EventType = "all" | "created" | "claimed" | "cancelled";
 
@@ -120,6 +121,7 @@ export default function History() {
   const [error, setError] = useState<string | null>(null);
   const [chainId, setChainId] = useState<number>(137);
   const [provider, setProvider] = useState<ethers.BrowserProvider | null>(null);
+  const [walletAddress, setWalletAddress] = useState<string | null>(null);
   const [walletFilter, setWalletFilter] = useState("");
   const [walletFilterInput, setWalletFilterInput] = useState("");
 
@@ -144,10 +146,15 @@ export default function History() {
           let amount = "";
           let unlockTimestamp: Date | undefined;
 
+          // Event parsing — topics[1] and topics[2] hold indexed params (capped at 32 bytes)
+          // CapsuleCreated: topics[1]=capsuleId, topics[2]=founder, topics[3]=primaryBeneficiary
+          // WithdrawalClaimed: topics[1]=capsuleId, topics[2]=beneficiary
+          // CapsuleCancelled: topics[1]=capsuleId, topics[2]=founder
           if (eventName === "CapsuleCreated") {
             type = "created";
+            // topics[2] = indexed founder address (20 bytes, right-padded to 32)
             founder = eventLog.topics[2] ? ethers.getAddress("0x" + eventLog.topics[2].slice(-40)) : "";
-            // args[0]=createdAt, args[1]=lockDuration, args[2]=originalUnlockTime (non-indexed)
+            // args[2] = non-indexed originalUnlockTime (unix timestamp)
             if (args[2] != null) {
               const unlockBn = typeof args[2] === "bigint" ? args[2] : BigInt(args[2].toString());
               unlockTimestamp = new Date(Number(unlockBn) * 1000);
@@ -155,19 +162,23 @@ export default function History() {
             amount = "";
           } else if (eventName === "WithdrawalClaimed") {
             type = "claimed";
+            // topics[2] = indexed beneficiary address
             beneficiary = eventLog.topics[2] ? ethers.getAddress("0x" + eventLog.topics[2].slice(-40)) : "";
+            // args[0] = non-indexed claimed amount (wei)
             if (args[0] != null) {
               const valBn = typeof args[0] === "bigint" ? args[0] : BigInt(args[0].toString());
               if (valBn > 0n) amount = ethers.formatEther(valBn);
             }
           } else if (eventName === "CapsuleCancelled") {
             type = "cancelled";
+            // topics[2] = indexed founder address
             founder = eventLog.topics[2] ? ethers.getAddress("0x" + eventLog.topics[2].slice(-40)) : "";
             amount = "";
           } else {
             continue;
           }
 
+          // topics[1] = indexed capsuleId (uint256, 32 bytes)
           const capsuleId = eventLog.topics[1] ? Number(BigInt(eventLog.topics[1])) : 0;
           const block = await log.getBlock();
           const timestamp = new Date((block?.timestamp || 0) * 1000);
@@ -195,6 +206,20 @@ export default function History() {
     [provider]
   );
 
+  async function handleConnected(signer: ethers.JsonRpcSigner, address: string) {
+    setWalletAddress(address);
+    const browserProvider = signer.provider as ethers.BrowserProvider;
+    if (browserProvider) {
+      setProvider(browserProvider);
+      try {
+        const network = await browserProvider.getNetwork();
+        setChainId(Number(network.chainId));
+      } catch (err) {
+        console.warn("Failed to detect network:", err);
+      }
+    }
+  }
+
   useEffect(() => {
     async function initProvider() {
       if (!window.ethereum) {
@@ -207,6 +232,12 @@ export default function History() {
         const network = await browserProvider.getNetwork();
         setChainId(Number(network.chainId));
         setProvider(browserProvider);
+        const signer = await browserProvider.getSigner();
+        const address = await signer.getAddress();
+        setWalletAddress(address);
+        // Auto-filter to connected wallet
+        setWalletFilter(address);
+        setWalletFilterInput(address);
         const latestBlock = await browserProvider.getBlockNumber();
         const fromBlock = 0; // query from genesis — local Hardhat has no blocks before deploy
         await fetchEvents(fromBlock, latestBlock);
@@ -247,11 +278,28 @@ export default function History() {
 
   const networkLabel = chainId === 137 ? "Polygon Mainnet" : chainId === 80001 ? "Mumbai Testnet" : `Chain ID: ${chainId}`;
 
+  if (!walletAddress) {
+    return (
+      <div className="page-container" style={{ textAlign: "center", paddingTop: "4rem", paddingBottom: "4rem" }}>
+        <h2 style={{ marginBottom: "2rem" }}>Transaction History</h2>
+        <p style={{ color: "var(--text-muted)", marginBottom: "2rem" }}>
+          Connect your wallet to view your transaction history.
+        </p>
+        <WalletConnect onConnected={handleConnected} />
+      </div>
+    );
+  }
+
   return (
     <div className="page-container">
       <div className="page-header">
         <h2>Transaction History</h2>
-        <Link to="/create" className="link-arrow">Create Capsule →</Link>
+        <div className="flex items-center gap-1">
+          <span className="text-sm text-muted font-mono">
+            {walletAddress?.slice(0, 6)}...{walletAddress?.slice(-4)}
+          </span>
+          <Link to="/create" className="link-arrow">Create Capsule →</Link>
+        </div>
       </div>
 
       {/* Network indicator */}
@@ -290,43 +338,10 @@ export default function History() {
 
         <div style={{ flex: 1 }} />
 
-        {/* Wallet filter */}
+        {/* Wallet filter — hidden, always auto-filtered to connected wallet */}
         <div className="flex gap-1 items-center wallet-filter-wrapper">
-          <input
-            type="text"
-            className="input wallet-filter-input"
-            value={walletFilterInput}
-            onChange={(e) => setWalletFilterInput(e.target.value)}
-            onKeyDown={(e) => {
-              if (e.key === "Enter") {
-                const v = walletFilterInput.trim();
-                if (ethers.isAddress(v)) setWalletFilter(v);
-                else setWalletFilter("");
-              }
-            }}
-            placeholder="Filter by address..."
-            style={{
-              background: "var(--surface)",
-              width: "180px",
-              padding: "0.4rem 0.75rem",
-              fontSize: "0.8rem",
-              minHeight: "36px",
-            }}
-          />
-          {walletFilterInput && walletFilter !== walletFilterInput && !ethers.isAddress(walletFilterInput) && (
-            <span className="text-danger text-xs">Invalid address</span>
-          )}
-          {walletFilter && (
-            <button
-              className="btn btn-ghost btn-sm"
-              onClick={() => { setWalletFilter(""); setWalletFilterInput(""); }}
-              style={{ padding: "0.4rem 0.5rem" }}
-            >
-              ×
-            </button>
-          )}
           <span className="text-muted text-xs">
-            {filteredEvents.length} / {events.length}
+            {filteredEvents.length} event{filteredEvents.length !== 1 ? "s" : ""}
           </span>
         </div>
       </div>
@@ -365,9 +380,9 @@ export default function History() {
           </div>
         ) : filteredEvents.length === 0 ? (
           <div className="card text-center" style={{ padding: "3rem 2rem" }}>
-            <p>No events found.</p>
+            <p>No events found for your wallet.</p>
             <p className="text-muted text-sm mt-1">
-              Events will appear here once capsules are created on the blockchain.
+              Your capsules and claims will appear here once they are created or claimed on the blockchain.
             </p>
           </div>
         ) : (

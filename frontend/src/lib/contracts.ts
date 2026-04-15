@@ -9,7 +9,6 @@ export const CONTRACT_ADDRESS =
 // returns keccak256 hashes for string fields, NOT the actual strings.
 // Use the manual getCapsule(uint256) returns (Capsule memory) function instead.
 // Duration-only approach: unlockTimestamp = createdAt + lockDuration (no drift)
-// Duration-only approach: unlockTimestamp = createdAt + lockDuration (no drift)
 export const VAULT_ABI = [
   // Manual getter that returns full Capsule struct (memory) — use this, NOT the auto-getter
   // Auto-getter corrupts string fields (returns keccak256 instead of actual string).

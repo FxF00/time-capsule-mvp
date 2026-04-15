@@ -34,9 +34,9 @@ Founder
   │
   ├─ Creates capsule on TimeCapsuleVault
   │   ├─ Deposits ETH (min 0.001 ETH)
-  │   ├─ Sets unlock timestamp (1 day – 10 years)
+  │   ├─ Sets lock duration (60 seconds – 10 years)
   │   ├─ Adds beneficiaries + allocation % (must sum to 100)
-  │   └─ Optionally attaches an encrypted IPFS message
+  │   └─ Optionally attaches an encrypted message (stored on-chain)
   │
   └─ Before unlock: founder can cancel and reclaim funds
 
@@ -44,7 +44,7 @@ Beneficiary
   │
   └─ After unlock timestamp: calls claim(capsuleId) to receive allocation
        ├─ Contract transfers ETH directly to beneficiary wallet
-       └─ Beneficiary can decrypt the IPFS message (if attached)
+       └─ Primary beneficiary (first in list) can decrypt the message (if attached)
 ```
 
 ---
@@ -55,7 +55,7 @@ Beneficiary
 - **Multi-beneficiary support** — up to 10 beneficiaries per capsule with configurable allocation percentages (must sum to 100)
 - **Founder cancellation** — founder can reclaim all funds before the unlock date
 - **Shareable capsule links** — QR code / URL lets beneficiaries view and claim their capsule
-- **Time-lock encrypted messages** — AES-256-GCM encrypted messages stored on IPFS; only the beneficiary can decrypt after unlock
+- **Time-lock encrypted messages** — AES-256-GCM encrypted messages stored on-chain; only the primary beneficiary can decrypt after unlock
 - **No custody risk** — funds go directly from vault to beneficiary; no middleman
 - **Pausable by owner** — emergency stop mechanism built on OpenZeppelin Pausable
 - **Re-entrancy protection** — OpenZeppelin ReentrancyGuard on all state-changing functions
@@ -84,13 +84,11 @@ Beneficiary
 │  Security: Ownable, ReentrancyGuard, Pausable       │
 └─────────────────────────────────────────────────────┘
                        │
-                       │ IPFS gateway (public)
+                       │ On-chain storage only
+                       │ (messageHash = encrypted message, no IPFS)
                        ▼
-┌─────────────────────────────────────────────────────┐
-│              Off-chain IPFS Storage                  │
-│     Encrypted message blob (AES-256-GCM)            │
-│     CID stored as messageHash in Capsule struct     │
-└─────────────────────────────────────────────────────┘
+               Encrypted message stored in
+               Capsule.messageHash (on-chain)
 ```
 
 ### Smart Contracts
@@ -103,26 +101,26 @@ Beneficiary
 
 ## How the Time-Lock Encryption Works
 
-Messages are encrypted client-side (in the browser) before being uploaded to IPFS. Decryption also happens client-side.
+Messages are encrypted client-side (in the browser) and stored directly on-chain. Decryption also happens client-side. Only the primary beneficiary (first in the beneficiary list) can decrypt.
 
 ### Algorithm: AES-256-GCM
 
 1. **Key derivation** — The symmetric key is derived as:
    ```
-   key = keccak256(abi.encode(beneficiaryAddress, unlockTimestamp))
+   key = keccak256(abi.encode(primaryBeneficiaryAddress, unlockTimestamp))
    ```
-   This hash is computed using `ethers.keccak256` (matching Solidity's `keccak256`). The beneficiary address and unlock timestamp are both publicly known (on-chain), so the founder can compute the key at creation time to encrypt, and the beneficiary can compute the same key after unlock to decrypt.
+   Both values are publicly known on-chain. The founder derives the key at creation time to encrypt; the primary beneficiary derives the same key after unlock to decrypt.
 
-2. **Encryption** — A random 96-bit IV is generated per message. The plaintext is encrypted with AES-256-GCM using the derived key. The IV is prepended to the ciphertext for transport.
+2. **Encryption** — A random 96-bit IV is generated per message. The plaintext is encrypted with AES-256-GCM using the derived key. The IV is prepended to the ciphertext.
 
-3. **Storage** — The encrypted blob is uploaded to IPFS via a public gateway. The resulting CID is stored on-chain as `messageHash` in the `Capsule` struct.
+3. **Storage** — The encrypted blob is stored directly on-chain in `capsule.messageHash`. No IPFS or off-chain storage.
 
-4. **Decryption** — After `block.timestamp > unlockTimestamp`, the beneficiary calls `claim()` on-chain and then fetches and decrypts the message using their wallet address and the now-public unlock timestamp.
+4. **Decryption** — After `block.timestamp > unlockTimestamp`, the primary beneficiary calls `claim()` on-chain and then decrypts the message locally using their address and the now-public unlock timestamp.
 
 ### Why this is time-lock secure
 
-- The key cannot be computed before `unlockTimestamp` because the beneficiary does not know the future timestamp in advance (the founder sets it, but it is stored on-chain and cannot be altered).
-- After unlock, the key is `keccak256(beneficiary + unlockTimestamp)`. The `unlockTimestamp` is now public and the beneficiary address is known, so the beneficiary can recompute the key and decrypt.
+- The key cannot be computed before `unlockTimestamp` because the future timestamp is stored on-chain and cannot be altered.
+- After unlock, both inputs are public: `primaryBeneficiary` address is known and `unlockTimestamp` is now confirmed on-chain.
 
 ---
 
@@ -244,26 +242,25 @@ VITE_CONTRACT_ADDRESS=0x_your_deployed_vault_address
 
 ---
 
-## IPFS Message Encryption
+## Message Encryption
 
-Messages are encrypted client-side using AES-256-GCM before upload. No server sees the plaintext.
+Messages are encrypted client-side using AES-256-GCM and stored directly on-chain in the `messageHash` field. No server or IPFS involved — only the primary beneficiary (first in the beneficiary list) can decrypt after unlock.
 
-### Setup
+### Algorithm: AES-256-GCM
 
-1. Get a free API token from https://nft.storage/manage
-2. Add it to `frontend/.env`:
-   ```
-   VITE_NFT_STORAGE_TOKEN=your_nft_storage_token
-   ```
-3. If no token is provided, the app falls back to using a public IPFS gateway for uploads (no registration required).
+1. **Key derivation** — `key = keccak256(abi.encode(primaryBeneficiaryAddress, unlockTimestamp))`
+   - Both values are publicly known on-chain, so the founder can derive the key at creation time to encrypt, and the primary beneficiary can derive the same key after unlock to decrypt.
 
-### How messages flow
+2. **Encryption** — A random 96-bit IV is generated per message. Plaintext is encrypted with AES-256-GCM using the derived key. The IV is prepended to the ciphertext.
 
-1. **Create capsule** — Founder enters a message on the Create page
-2. **Encrypt** — Browser derives the AES key from `keccak256(beneficiary + unlockTimestamp)` and encrypts the message
-3. **Upload** — Encrypted blob is POSTed to `https://ipfs.io/api/v0/add` (or NFT.Storage if token is set)
-4. **Store CID** — The IPFS CID is saved on-chain in `capsule.messageHash`
-5. **Beneficiary claim** — After unlock, beneficiary fetches from IPFS and decrypts locally
+3. **Storage** — The base64-encoded ciphertext is stored directly in `capsule.messageHash` on-chain.
+
+4. **Decryption** — After unlock, primary beneficiary calls `claim()` on-chain and then decrypts the message locally using their address and the now-public unlock timestamp.
+
+### Why this is time-lock secure
+
+- The key cannot be computed before `unlockTimestamp` because the beneficiary address is known but `unlockTimestamp` is a future value stored on-chain and cannot be altered.
+- After unlock, both inputs are public: `primaryBeneficiary` (known) and `unlockTimestamp` (now public).
 
 ---
 
@@ -312,7 +309,7 @@ The frontend reads the vault address from `VITE_CONTRACT_ADDRESS` in `frontend/.
 | Development framework | Hardhat |
 | Web3 library | ethers.js v6 |
 | Frontend | React 18, Vite 5, TypeScript |
-| IPFS | Public gateway (ipfs.io, w3s.link) + optional NFT.Storage |
+| Message storage | On-chain (messageHash field) — no IPFS |
 | Encryption | Web Crypto API (AES-256-GCM) |
 | Contract verification | @nomicfoundation/hardhat-verify |
 | Contract types | TypeChain |

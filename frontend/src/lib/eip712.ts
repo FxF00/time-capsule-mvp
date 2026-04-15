@@ -9,11 +9,14 @@ export const EIP712_DOMAIN = {
   verifyingContract: CONTRACT_ADDRESS,
 };
 
-export const CLAIM_TYPE = [
-  { name: "capsuleId", type: "uint256" },
-  { name: "beneficiary", type: "address" },
-  { name: "nonce", type: "uint256" },
-];
+// Must be Record<string, TypedDataField[]> for ethers v6 signTypedData
+export const CLAIM_TYPE: Record<string, { name: string; type: string }[]> = {
+  Claim: [
+    { name: "capsuleId", type: "uint256" },
+    { name: "beneficiary", type: "address" },
+    { name: "nonce", type: "uint256" },
+  ],
+};
 
 export interface ClaimMessage {
   capsuleId: number;
@@ -46,7 +49,7 @@ export async function signClaimMessage(
     nonce,
   };
 
-  // ethers v6 signTypedData
+  // ethers v6 signTypedData — types must be Record<string, TypedDataField[]>
   const signature = await signer.signTypedData(domain, CLAIM_TYPE, message);
   return signature;
 }

@@ -40,7 +40,10 @@ export function useTimeCapsule() {
         const capsuleTuple = await contract.getCapsule(capsuleId) as any;
         const beneficiaryCount = await contract.getBeneficiaryCount(capsuleId);
 
-        // getCapsule returns: [founder, unlockTimestamp, isWithdrawn, messageHash, beneficiaries[], depositedValue, createdAt, lockDuration, originalUnlockTime, primaryBeneficiary]
+        // Tuple decode order (matches contract struct field order):
+        // [0]=founder, [1]=unlockTimestamp, [2]=isWithdrawn, [3]=messageHash,
+        // [4]=beneficiaries[], [5]=depositedValue, [6]=createdAt,
+        // [7]=lockDuration, [8]=originalUnlockTime, [9]=primaryBeneficiary
         const founder: string = capsuleTuple[0];
         const unlockTimestampFromContract: bigint = capsuleTuple[1];
         const isWithdrawn: boolean = capsuleTuple[2];
@@ -52,7 +55,8 @@ export function useTimeCapsule() {
         const originalUnlockTime: bigint = capsuleTuple[8];
         const primaryBeneficiary: string = capsuleTuple[9];
 
-        // Client-side unlock computation — no network round-trip drift
+        // Client-side unlock check: derive unlockTimestamp locally to avoid
+        // block.timestamp drift between network calls (block.timestamp >= createdAt + lockDuration)
         const currentTime = BigInt(Math.floor(Date.now() / 1000));
         const unlockTimestamp = createdAt + lockDuration;
         const timeRemaining = unlockTimestamp > currentTime ? unlockTimestamp - currentTime : BigInt(0);
@@ -141,8 +145,9 @@ export function useTimeCapsule() {
           return null;
         }
 
-        // capsuleId is the first indexed param → topics[1] (topics[0] is event signature)
-        // topics[1] is a 32-byte padded hex string
+        // capsuleId is the first indexed param → topics[1]
+        // topics[0] = event signature hash, topics[1..3] = indexed params
+        // topics[1] is a 32-byte padded uint256 hex string
         const capsuleIdHex = capsuleEvent.topics[1];
         if (!capsuleIdHex) {
           setError("CapsuleCreated event has no capsuleId in topics");
