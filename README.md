@@ -108,9 +108,9 @@ All capsule data (founder, beneficiaries, allocations, timestamps, encrypted mes
 │           TimeCapsuleVault (Solidity)               │
 │         [Hardhat local node — deployable to any EVM network]  │
 │                                                     │
-│  State: capsules[], beneficiaryIndices mapping       │
-│  Core: createCapsule(), claim(), claimBySig(), cancelCapsule() |
-│  Security: Ownable, ReentrancyGuard, Pausable       │
+│  State: capsules[], isBeneficiary, beneficiaryIndices, claimedBySig, beneficiaryNonces │
+│  Core: createCapsule(), claim(), claimBySig(), cancelCapsule(), setMessageHash() │
+│  Security: Ownable, ReentrancyGuard, Pausable, EIP712, ECDSA │
 └─────────────────────────────────────────────────────┘
                        │
                        │ On-chain storage only
@@ -262,12 +262,13 @@ The frontend reads the vault address from `VITE_CONTRACT_ADDRESS` in `frontend/.
 
 | Function | Description |
 |---|---|
-| `createCapsule(beneficiaries[], allocations[], lockDurationSeconds, messageHash)` | Create a new capsule (requires 0.001 ETH min) |
+| `createCapsule(beneficiaryAddresses[], allocations[], lockDuration, messageHash)` | Create a new capsule (requires 0.001 ETH min) |
 | `claim(capsuleId)` | Beneficiary claims their allocation after unlock |
 | `claimBySig(capsuleId, signature)` | Beneficiary claims via EIP-712 signature (meta-transaction) |
 | `cancelCapsule(capsuleId)` | Founder reclaims funds before unlock |
 | `setMessageHash(capsuleId, messageHash)` | Founder updates the encrypted message after creation |
 | `getCapsule(capsuleId)` | Returns full capsule struct |
+| `getBeneficiaryCount(capsuleId)` | Returns number of beneficiaries |
 | `isUnlocked(capsuleId)` | Returns true if unlock timestamp has passed |
 | `getTimeRemaining(capsuleId)` | Seconds until unlock |
 | `getUnlockTimestamp(capsuleId)` | Returns authoritative unlock timestamp (createdAt + lockDuration) |
