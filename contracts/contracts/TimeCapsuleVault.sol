@@ -83,6 +83,7 @@ contract TimeCapsuleVault is Ownable, ReentrancyGuard, Pausable, EIP712 {
 
     // ============ Errors ============
     error AlreadyWithdrawn();
+    error DuplicateBeneficiary();
     error NotBeneficiary();
     error NothingToClaim();
     error TimeLockActive();
@@ -146,6 +147,7 @@ contract TimeCapsuleVault is Ownable, ReentrancyGuard, Pausable, EIP712 {
         // Add beneficiaries
         for (uint256 i = 0; i < beneficiaryAddresses.length; i++) {
             if (beneficiaryAddresses[i] == address(0)) revert ZeroAddress();
+            if (i > 0 && isBeneficiary[capsuleId][beneficiaryAddresses[i]]) revert DuplicateBeneficiary();
             c.beneficiaries.push(Beneficiary({
                 wallet: payable(beneficiaryAddresses[i]),
                 allocationPercentage: allocations[i],
@@ -226,8 +228,8 @@ contract TimeCapsuleVault is Ownable, ReentrancyGuard, Pausable, EIP712 {
     function cancelCapsule(uint256 capsuleId) external nonReentrant whenNotPaused {
         Capsule storage c = capsules[capsuleId];
         if (c.founder != msg.sender) revert Unauthorized();
-        if (block.timestamp >= c.createdAt + c.lockDuration) revert TimeLockActive();
         if (c.isWithdrawn) revert AlreadyWithdrawn();
+        if (block.timestamp >= c.createdAt + c.lockDuration) revert TimeLockActive();
 
         c.isWithdrawn = true;
         uint256 amount = c.depositedValue;
