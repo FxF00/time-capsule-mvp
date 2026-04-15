@@ -11,6 +11,8 @@ import { getVaultContract, estimateGas, type GasEstimateResult } from "../lib/co
 import { useNetwork, getNetworkInfo } from "../contexts/NetworkContext";
 import { useToast } from "../components/Toast";
 import { parseContractError } from "../lib/errors";
+import { signClaimMessage } from "../lib/eip712";
+import { submitClaimSignature, RelayerError } from "../lib/relayer";
 
 type SharePageState = "loading" | "wrong_wallet" | "locked" | "unlocked" | "claimed" | "not_found";
 
@@ -40,6 +42,16 @@ export default function ClaimCapsule() {
   const [currentTimestamp, setCurrentTimestamp] = useState<bigint | null>(null);
   const [claiming, setClaiming] = useState(false);
 
+  // Signature relay state
+  const [ethBalance, setEthBalance] = useState<bigint | null>(null);
+  const [showSignModal, setShowSignModal] = useState(false);
+  const [signing, setSigning] = useState(false);
+  const [signatureSubmitted, setSignatureSubmitted] = useState(false);
+  const [submittedTxHash, setSubmittedTxHash] = useState<string | null>(null);
+  const [signatureError, setSignatureError] = useState<string | null>(null);
+  const [pendingNonce, setPendingNonce] = useState<number | null>(null);
+  const [pendingSignature, setPendingSignature] = useState<string | null>(null);
+
   const { setNetwork, setProvider } = useNetwork();
   const { showToast } = useToast();
   const { loading, error, setError, getCapsule, getMyAllocation, claimCapsule } = useTimeCapsule();
@@ -68,8 +80,12 @@ export default function ClaimCapsule() {
     if (provider) {
       setProvider(provider);
       try {
-        const network = await provider.getNetwork();
+        const [network, balance] = await Promise.all([
+          provider.getNetwork(),
+          provider.getBalance(address),
+        ]);
         setNetwork(getNetworkInfo(network));
+        setEthBalance(balance);
       } catch (err) {
         console.warn("Failed to detect network:", err);
       }
@@ -143,6 +159,75 @@ export default function ClaimCapsule() {
     } finally {
       setClaiming(false);
     }
+  }
+
+  async function handleSignToClaim() {
+    if (!signer || !capsule || !walletAddress) return;
+    setSigning(true);
+    setSignatureError(null);
+    setPendingSignature(null);
+    setPendingNonce(null);
+    try {
+      const contract = getVaultContract(signer) as ethers.Contract;
+      // Fetch the beneficiary's nonce from the contract
+      const nonce: number = await contract.beneficiaryNonces(walletAddress);
+      setPendingNonce(nonce);
+
+      // Generate the EIP-712 signature
+      const signature = await signClaimMessage(capsule.id, walletAddress, nonce, signer);
+      setPendingSignature(signature);
+
+      // Submit to relayer
+      try {
+        const result = await submitClaimSignature(capsule.id, walletAddress, signature);
+        setSubmittedTxHash(result.txHash);
+        setSignatureSubmitted(true);
+        showToast("success", "Signature submitted! Relayer will process shortly.");
+
+        // Refresh capsule state after a delay
+        setTimeout(async () => {
+          const updated = await getCapsule(capsule.id, signer);
+          if (updated) setCapsule(updated);
+          if (isShareMode && updated?.isWithdrawn) {
+            setSharePageState("claimed");
+          }
+        }, 15000);
+      } catch (err) {
+        if (err instanceof RelayerError) {
+          if (err.statusCode === 0 || err.message.includes("fetch")) {
+            setSignatureError(
+              "Relayer not available — please try again in 5 minutes. You can also claim directly if you get some ETH for gas."
+            );
+          } else {
+            setSignatureError(`Relayer error: ${err.message}`);
+          }
+        } else {
+          setSignatureError(String(err));
+        }
+      }
+    } catch (err: any) {
+      if (err.code === "ACTION_REJECTED" || err.code === 4001) {
+        setSignatureError("Signature request was rejected.");
+      } else {
+        setSignatureError(err.message || "Signing failed");
+      }
+    } finally {
+      setSigning(false);
+    }
+  }
+
+  function openSignModal() {
+    setShowSignModal(true);
+    setSignatureError(null);
+    setSignatureSubmitted(false);
+    setSubmittedTxHash(null);
+    setPendingSignature(null);
+    setPendingNonce(null);
+  }
+
+  function closeSignModal() {
+    if (signing) return; // Don't close while signing
+    setShowSignModal(false);
   }
 
   function handleCountdownExpire() {
@@ -315,6 +400,20 @@ export default function ClaimCapsule() {
             <button className="btn btn-ghost btn-full" disabled>
               Locked — Come Back When Timer Ends
             </button>
+          ) : ethBalance !== null && ethBalance < BigInt("1000000000000000") ? (
+            <div className="flex flex-col gap-1">
+              <div className="alert" style={{ background: "rgba(255,200,0,0.1)", border: "1px solid rgba(255,200,0,0.3)", borderRadius: "var(--radius)" }}>
+                <p className="text-sm" style={{ color: "#ffc800" }}>
+                  Not enough ETH for gas — use signature relay instead
+                </p>
+              </div>
+              <button
+                className="btn btn-primary btn-full btn-lg"
+                onClick={openSignModal}
+              >
+                Sign &amp; Relay
+              </button>
+            </div>
           ) : (
             <button
               className="btn btn-success btn-full btn-lg"
@@ -466,13 +565,29 @@ export default function ClaimCapsule() {
                 </div>
               )}
 
-              <button
-                className="btn btn-success btn-full btn-lg"
-                onClick={handleClaim}
-                disabled={claiming}
-              >
-                {claiming ? "Claiming..." : "Claim ETH"}
-              </button>
+              {ethBalance !== null && ethBalance < BigInt("1000000000000000") ? (
+                <div className="flex flex-col gap-1">
+                  <div className="alert" style={{ background: "rgba(255,200,0,0.1)", border: "1px solid rgba(255,200,0,0.3)", borderRadius: "var(--radius)" }}>
+                    <p className="text-sm" style={{ color: "#ffc800" }}>
+                      Not enough ETH for gas — use signature relay instead
+                    </p>
+                  </div>
+                  <button
+                    className="btn btn-primary btn-full btn-lg"
+                    onClick={openSignModal}
+                  >
+                    Sign &amp; Relay
+                  </button>
+                </div>
+              ) : (
+                <button
+                  className="btn btn-success btn-full btn-lg"
+                  onClick={handleClaim}
+                  disabled={claiming}
+                >
+                  {claiming ? "Claiming..." : "Claim ETH"}
+                </button>
+              )}
             </div>
           ) : (
             <div className="card text-center" style={{ padding: "1rem" }}>
@@ -545,6 +660,123 @@ export default function ClaimCapsule() {
           >
             Look Up Another Capsule
           </button>
+        </div>
+      )}
+
+      {/* Signature Relay Modal */}
+      {showSignModal && (
+        <div
+          style={{
+            position: "fixed",
+            inset: 0,
+            background: "rgba(0,0,0,0.7)",
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+            zIndex: 1000,
+            padding: "1rem",
+          }}
+          onClick={(e) => {
+            if (e.target === e.currentTarget) closeSignModal();
+          }}
+        >
+          <div
+            className="card animate-in"
+            style={{ maxWidth: "480px", width: "100%", textAlign: "center" }}
+          >
+            {!signatureSubmitted ? (
+              <>
+                <h3 className="mb-2">Sign to Claim</h3>
+                <p className="text-muted text-sm mb-2">
+                  You don't need ETH to claim — just sign this message and the relayer will submit the transaction for you.
+                </p>
+
+                {capsule && walletAddress && (
+                  <div
+                    className="card mb-2"
+                    style={{ textAlign: "left", padding: "0.75rem", background: "var(--bg-secondary)" }}
+                  >
+                    <p className="text-xs text-muted mb-1">Data to sign:</p>
+                    <div className="flex flex-col gap-05">
+                      <div className="flex justify-between">
+                        <span className="text-sm text-muted">Capsule ID</span>
+                        <span className="text-sm font-mono">{capsule.id}</span>
+                      </div>
+                      <div className="flex justify-between">
+                        <span className="text-sm text-muted">Your address</span>
+                        <span className="text-sm font-mono">
+                          {walletAddress.slice(0, 6)}...{walletAddress.slice(-4)}
+                        </span>
+                      </div>
+                      <div className="flex justify-between">
+                        <span className="text-sm text-muted">Nonce</span>
+                        <span className="text-sm font-mono">
+                          {pendingNonce !== null ? pendingNonce : "—"}
+                        </span>
+                      </div>
+                    </div>
+                  </div>
+                )}
+
+                {signatureError && (
+                  <div className="alert alert-danger mb-2" style={{ textAlign: "left", fontSize: "0.85rem" }}>
+                    {signatureError}
+                  </div>
+                )}
+
+                <div className="flex gap-1">
+                  <button
+                    className="btn btn-ghost"
+                    onClick={closeSignModal}
+                    disabled={signing}
+                    style={{ flex: 1 }}
+                  >
+                    Cancel
+                  </button>
+                  {!pendingSignature ? (
+                    <button
+                      className="btn btn-primary"
+                      onClick={handleSignToClaim}
+                      disabled={signing || pendingNonce === null}
+                      style={{ flex: 2 }}
+                    >
+                      {signing ? "Waiting for signature..." : "Sign & Submit"}
+                    </button>
+                  ) : (
+                    <button
+                      className="btn btn-primary"
+                      onClick={handleSignToClaim}
+                      disabled={signing}
+                      style={{ flex: 2 }}
+                    >
+                      {signing ? "Submitting to relayer..." : "Submit to Relayer"}
+                    </button>
+                  )}
+                </div>
+              </>
+            ) : (
+              <>
+                <div style={{ fontSize: "3rem", marginBottom: "1rem" }}>
+                  <svg width="48" height="48" viewBox="0 0 28 28" fill="none" style={{ margin: "0 auto" }}>
+                    <rect x="2" y="2" width="24" height="24" rx="2" stroke="#39ff8f" strokeWidth="1.5" fill="none" />
+                    <path d="M8 14 L12 18 L20 10" stroke="#39ff8f" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
+                  </svg>
+                </div>
+                <h3 className="mb-1" style={{ color: "var(--success)" }}>Signature Submitted!</h3>
+                <p className="text-muted text-sm mb-2">
+                  The relayer will process your claim shortly. This usually takes 1-2 minutes.
+                </p>
+                {submittedTxHash && (
+                  <p className="text-xs text-muted mb-2">
+                    Tx Hash: <span className="font-mono">{submittedTxHash.slice(0, 10)}...{submittedTxHash.slice(-8)}</span>
+                  </p>
+                )}
+                <button className="btn btn-primary btn-full" onClick={closeSignModal}>
+                  Close
+                </button>
+              </>
+            )}
+          </div>
         </div>
       )}
     </div>

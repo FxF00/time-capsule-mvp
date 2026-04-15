@@ -19,6 +19,7 @@ export const VAULT_ABI = [
   // Beneficiary lookups
   "function beneficiaryIndices(uint256, address) view returns (uint256)",
   "function isBeneficiary(uint256, address) view returns (bool)",
+  "function beneficiaryNonces(address) view returns (uint256)",
   // Core
   "function createCapsule(address[] calldata, uint256[] calldata, uint256 lockDuration, string calldata) external payable returns (uint256)",
   "function claim(uint256) external",

@@ -1,9 +1,11 @@
 // SPDX-License-Identifier: MIT
-pragma solidity ^0.8.20;
+pragma solidity ^0.8.24;
 
 import "@openzeppelin/contracts/access/Ownable.sol";
 import "@openzeppelin/contracts/utils/ReentrancyGuard.sol";
 import "@openzeppelin/contracts/utils/Pausable.sol";
+import "@openzeppelin/contracts/utils/cryptography/ECDSA.sol";
+import "@openzeppelin/contracts/utils/cryptography/EIP712.sol";
 
 /**
  * @title TimeCapsuleVault
@@ -16,10 +18,11 @@ import "@openzeppelin/contracts/utils/Pausable.sol";
  * The frontend derives the encryption key from getUnlockTimestamp(capsuleId)
  * which is always createdAt + lockDuration (never drifts from the stored contract state).
  */
-contract TimeCapsuleVault is Ownable, ReentrancyGuard, Pausable {
+contract TimeCapsuleVault is Ownable, ReentrancyGuard, Pausable, EIP712 {
 
     // ============ Constants ============
-    constructor() Ownable(msg.sender) {}
+    bytes32 constant _CLAIM_SIG_TYPEHASH = keccak256("ClaimSig(uint256 capsuleId,address beneficiary,uint256 nonce)");
+    constructor() Ownable(msg.sender) EIP712("TimeCapsuleVault", "1") {}
     uint256 public constant MIN_LOCK_SECONDS = 60 seconds;
     uint256 public constant MAX_LOCK_SECONDS = 10 * 365 days;
     uint256 public constant MIN_CREATION_FEE = 0.001 ether;
@@ -45,12 +48,24 @@ contract TimeCapsuleVault is Ownable, ReentrancyGuard, Pausable {
         address primaryBeneficiary; // first beneficiary — the only one who can decrypt the message
     }
 
+    struct ClaimSig {
+        uint256 capsuleId;
+        address beneficiary;
+        uint256 nonce;
+    }
+
     // ============ State ============
     Capsule[] public capsules; // capsuleId => Capsule
     // capsuleId => beneficiary address => isBeneficiary
     mapping(uint256 => mapping(address => bool)) public isBeneficiary;
     // capsuleId => beneficiary address => beneficiary index
     mapping(uint256 => mapping(address => uint256)) public beneficiaryIndices;
+    // capsuleId => beneficiary address => true if claimed via signature
+    mapping(uint256 => mapping(address => bool)) public claimedBySig;
+    // beneficiary address => nonce for meta-transactions
+    mapping(address => uint256) public beneficiaryNonces;
+    // trusted relayer address for meta-transactions
+    address public relayer;
 
     // ============ Events ============
     event CapsuleCreated(
@@ -80,6 +95,8 @@ contract TimeCapsuleVault is Ownable, ReentrancyGuard, Pausable {
     error InsufficientFee();
     error AllocationMustSumTo100();
     error Unauthorized();
+    error InvalidSignature();
+    error RelayerNotTrusted();
 
     // ============ Core Functions ============
 
@@ -155,6 +172,42 @@ contract TimeCapsuleVault is Ownable, ReentrancyGuard, Pausable {
         if (c.depositedValue == 0) revert NothingToClaim();
 
         b.claimed = true;
+        beneficiaryNonces[msg.sender]++;
+        uint256 amount = (c.depositedValue * b.allocationPercentage) / 100;
+        emit WithdrawalClaimed(capsuleId, msg.sender, amount);
+        (bool sent, ) = msg.sender.call{value: amount}("");
+        require(sent, "Transfer failed");
+
+        // Check if all beneficiaries have claimed
+        bool allClaimed = true;
+        for (uint256 i = 0; i < c.beneficiaries.length; i++) {
+            if (!c.beneficiaries[i].claimed) { allClaimed = false; break; }
+        }
+        if (allClaimed) { c.isWithdrawn = true; }
+    }
+
+    /// @notice Beneficiary claims via EIP-712 signature (meta-transaction)
+    /// @param capsuleId The ID of the capsule
+    /// @param signature The EIP-712 signature from the beneficiary
+    function claimBySig(uint256 capsuleId, bytes calldata signature) external nonReentrant whenNotPaused {
+        ClaimSig memory claim = ClaimSig(capsuleId, msg.sender, beneficiaryNonces[msg.sender]);
+
+        if (claimedBySig[capsuleId][msg.sender]) revert AlreadyClaimed();
+
+        address signer = ECDSA.recover(_hashClaim(claim), signature);
+        if (signer != msg.sender) revert InvalidSignature();
+
+        Capsule storage c = capsules[capsuleId];
+        if (block.timestamp < c.createdAt + c.lockDuration) revert TimeLockActive();
+        if (c.isWithdrawn) revert AlreadyWithdrawn();
+        if (!isBeneficiary[capsuleId][msg.sender]) revert NotBeneficiary();
+
+        Beneficiary storage b = _getBeneficiary(capsuleId, msg.sender);
+        if (b.claimed) revert AlreadyClaimed();
+        if (c.depositedValue == 0) revert NothingToClaim();
+
+        claimedBySig[capsuleId][msg.sender] = true;
+        beneficiaryNonces[msg.sender]++;
         uint256 amount = (c.depositedValue * b.allocationPercentage) / 100;
         emit WithdrawalClaimed(capsuleId, msg.sender, amount);
         (bool sent, ) = msg.sender.call{value: amount}("");
@@ -240,12 +293,25 @@ contract TimeCapsuleVault is Ownable, ReentrancyGuard, Pausable {
         _unpause();
     }
 
+    /// @notice Set trusted relayer address for meta-transactions
+    /// @param _relayer The address of the trusted relayer
+    function setTrustedRelayer(address _relayer) external onlyOwner {
+        relayer = _relayer;
+    }
+
     // ============ Internal ============
 
     function _getBeneficiary(uint256 capsuleId, address wallet) internal view returns (Beneficiary storage) {
         uint256 idx = beneficiaryIndices[capsuleId][wallet];
         if (idx == 0) revert NotBeneficiary();
         return capsules[capsuleId].beneficiaries[idx - 1];
+    }
+
+    /// @notice Returns the EIP-712 hash of a ClaimSig
+    /// @param claim The claim struct to hash
+    /// @return The EIP-712 typed hash
+    function _hashClaim(ClaimSig memory claim) internal view returns (bytes32) {
+        return _hashTypedDataV4(keccak256(abi.encode(_CLAIM_SIG_TYPEHASH, claim.capsuleId, claim.beneficiary, claim.nonce)));
     }
 
     receive() external payable {}
