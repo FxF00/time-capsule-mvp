@@ -210,12 +210,15 @@ describe("TimeCapsuleVault", function () {
       expect(capsuleEvent).to.not.be.undefined;
       expect(capsuleEvent!.args.capsuleId).to.equal(0);
       expect(capsuleEvent!.args.founder).to.equal(owner.address);
-      expect(capsuleEvent!.args.value).to.equal(ONE_ETHER);
 
-      const addEvent1 = receipt.logs.find((l: any) =>
-        l.fragment?.name === "BeneficiaryAdded" && l.args.beneficiary === beneficiary1.address
+      // depositedValue is not in the event; verify via contract state
+      const capsule = await vault.capsules(0);
+      expect(capsule.depositedValue).to.equal(ONE_ETHER);
+
+      const addEvents = receipt.logs.filter((l: any) =>
+        l.fragment?.name === "BeneficiaryAdded"
       );
-      expect(addEvent1).to.not.be.undefined;
+      expect(addEvents.length).to.equal(2);
     });
 
     it("CapsuleCreated event stores capsuleId in topics[1] (indexed parameter)", async () => {
