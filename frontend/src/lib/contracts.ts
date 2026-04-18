@@ -72,10 +72,14 @@ export async function estimateGas(
   signer: ethers.JsonRpcSigner,
   fn: any,
   args: any[],
-  txOptions?: any
+  _txOptions?: any
 ): Promise<GasEstimateResult> {
   try {
-    const estimate = await fn.estimateGas(...args, txOptions || {});
+    // NOTE: we deliberately omit txOptions.value here because estimateGas
+    // with a non-zero msg.value requires a wallet signature on some providers,
+    // causing a double MetaMask popup (one for estimate, one for the real tx).
+    // The actual value is only sent when the user confirms the real transaction.
+    const estimate = await fn.estimateGas(...args, {});
     const feeData = await signer.provider!.getFeeData();
     const gasPrice = feeData.gasPrice || BigInt(0);
     const costEth = Number(ethers.formatEther(estimate * gasPrice));

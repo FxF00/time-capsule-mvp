@@ -112,7 +112,7 @@ export default function CreateCapsule() {
         signer,
         contract.createCapsule,
         [addresses, allocations, lockDuration, ""],
-        { value }
+        null
       );
       setGasEstimate(result);
     } catch (err: any) {
