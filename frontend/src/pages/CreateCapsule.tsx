@@ -110,9 +110,10 @@ export default function CreateCapsule() {
       const contract = getVaultContract(signer) as ethers.Contract;
       const result = await estimateGas(
         signer,
-        contract.createCapsule,
+        contract,
+        "createCapsule",
         [addresses, allocations, lockDuration, ""],
-        null
+        { value: ethers.parseEther(form.ethAmount || "0") }
       );
       setGasEstimate(result);
     } catch (err: any) {
@@ -121,8 +122,9 @@ export default function CreateCapsule() {
   }
 
   useEffect(() => {
-    const timeout = setTimeout(() => updateGasEstimate(), 500);
-    return () => clearTimeout(timeout);
+    // Don't call estimateGas on form changes — it triggers MetaMask popups.
+    // Gas estimation is UX-only; the actual tx is confirmed by MetaMask on submit.
+    setGasEstimate(null);
   }, [form, signer, walletAddress, totalAllocation]);
 
   function addBeneficiary() {

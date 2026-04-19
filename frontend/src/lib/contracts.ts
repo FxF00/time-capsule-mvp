@@ -5,41 +5,31 @@ export const CONTRACT_ADDRESS =
   import.meta.env.VITE_CONTRACT_ADDRESS || "0x0000000000000000000000000000000000000001";
 
 // Minimal ABI for TimeCapsuleVault
-// NOTE: Capsule struct has dynamic beneficiaries[] array. The auto-getter capsules(id)
-// returns keccak256 hashes for string fields, NOT the actual strings.
-// Use the manual getCapsule(uint256) returns (Capsule memory) function instead.
-// Duration-only approach: unlockTimestamp = createdAt + lockDuration (no drift)
 export const VAULT_ABI = [
-  // Manual getter that returns full Capsule struct (memory) — use this, NOT the auto-getter
-  // Auto-getter corrupts string fields (returns keccak256 instead of actual string).
-  // Manual getCapsule(uint256) returns (Capsule memory) gives correct values.
   "function getCapsule(uint256) view returns ((address, uint256, bool, string, uint256[], uint256, uint256, uint256, uint256, address))",
-  // (founder, unlockTimestamp, isWithdrawn, messageHash, beneficiaries, depositedValue, createdAt, lockDuration, originalUnlockTime, primaryBeneficiary)
-  // Beneficiary lookups
   "function beneficiaryIndices(uint256, address) view returns (uint256)",
   "function isBeneficiary(uint256, address) view returns (bool)",
   "function beneficiaryNonces(address) view returns (uint256)",
-  // Core
   "function createCapsule(address[] calldata, uint256[] calldata, uint256 lockDuration, string calldata) external payable returns (uint256)",
   "function claim(uint256) external",
   "function cancelCapsule(uint256) external",
   "function setMessageHash(uint256 capsuleId, string calldata messageHash) external",
-  // Views
   "function getBeneficiaryCount(uint256) view returns (uint256)",
   "function getMyAllocation(uint256) view returns (uint256, bool)",
   "function isUnlocked(uint256) view returns (bool)",
   "function getTimeRemaining(uint256) view returns (uint256)",
   "function getUnlockTimestamp(uint256) view returns (uint256)",
-  // Admin
   "function pause() external",
   "function unpause() external",
-  // Events (for decoding)
   "event CapsuleCreated(uint256 indexed, address indexed, uint256, uint256, uint256, string, address indexed)",
-  // capsuleId, founder, createdAt, lockDuration, originalUnlockTime, messageHash, primaryBeneficiary
   "event BeneficiaryAdded(uint256 indexed, address indexed, uint256)",
   "event WithdrawalClaimed(uint256 indexed, address indexed, uint256)",
   "event CapsuleCancelled(uint256 indexed, address indexed)",
 ] as const;
+
+export function getVaultContract(provider: ethers.ContractRunner) {
+  return new ethers.Contract(CONTRACT_ADDRESS, VAULT_ABI, provider);
+}
 
 export type Capsule = {
   founder: string;
@@ -50,10 +40,6 @@ export type Capsule = {
   createdAt: bigint;
   lockDuration: bigint;
 };
-
-export function getVaultContract(provider: ethers.ContractRunner) {
-  return new ethers.Contract(CONTRACT_ADDRESS, VAULT_ABI, provider);
-}
 
 export interface GasEstimate {
   estimate: bigint;
@@ -68,22 +54,63 @@ export interface GasEstimateError {
 
 export type GasEstimateResult = GasEstimate | GasEstimateError;
 
+/**
+ * Validates that a transaction would succeed (static eth_call),
+ * then estimates gas using eth_estimateGas via the raw RPC provider.
+ *
+ * eth_call is read-only — never triggers MetaMask pop-ups.
+ */
 export async function estimateGas(
   signer: ethers.JsonRpcSigner,
-  fn: any,
+  contract: ethers.Contract,
+  functionName: string,
   args: any[],
-  _txOptions?: any
+  txOptions?: { value?: bigint }
 ): Promise<GasEstimateResult> {
   try {
-    // NOTE: we deliberately omit txOptions.value here because estimateGas
-    // with a non-zero msg.value requires a wallet signature on some providers,
-    // causing a double MetaMask popup (one for estimate, one for the real tx).
-    // The actual value is only sent when the user confirms the real transaction.
-    const estimate = await fn.estimateGas(...args, {});
-    const feeData = await signer.provider!.getFeeData();
+    const from = await signer.getAddress();
+    const rpcProvider = signer.provider as ethers.BrowserProvider;
+    const target = contract.target as string;
+    const iface = contract.interface;
+
+    const fragment = iface.getFunction(functionName)!;
+    const callData = iface.encodeFunctionData(fragment, args);
+
+    const tx = {
+      from,
+      to: target,
+      data: callData,
+      value: txOptions?.value ? "0x" + txOptions.value.toString(16) : "0x0",
+    };
+
+    // Step 1: eth_call — static validation. Never triggers wallet pop-up.
+    try {
+      await rpcProvider.call(tx);
+    } catch (callErr: any) {
+      const data = callErr.data || "";
+      const reason = data.startsWith("0x")
+        ? `Reverted: 0x${data.slice(2, 10)}...`
+        : (callErr.reason || callErr.message || "Transaction would revert");
+      return { success: false, error: reason };
+    }
+
+    // Step 2: eth_estimateGas via raw RPC — bypasses MetaMask signer intercept.
+    let estimate: bigint;
+    try {
+      const estTx: any = { to: target, data: callData, value: tx.value };
+      const raw = await (rpcProvider as any).send("eth_estimateGas", [estTx]);
+      estimate = BigInt(raw);
+    } catch {
+      // Fallback to ethers estimation (may trigger popup — unavoidable)
+      const fn = contract.getFunction(functionName);
+      estimate = await fn.estimateGas(...args, txOptions || {});
+    }
+
+    const feeData = await rpcProvider.getFeeData();
     const gasPrice = feeData.gasPrice || BigInt(0);
     const costEth = Number(ethers.formatEther(estimate * gasPrice));
     return { estimate, costEth, success: true };
+
   } catch (err: any) {
     return { success: false, error: err.message || "Gas estimation failed" };
   }
